@@ -9,7 +9,9 @@ create table public.users_profile (
 alter table public.users_profile enable row level security;
 
 revoke all on table public.users_profile from public, anon, authenticated;
-grant select, update on table public.users_profile to authenticated;
+grant select on table public.users_profile to authenticated;
+-- Users may edit only their own profile fields; user_id and created_at stay as the sign-up trigger set them.
+grant update (display_name, locale, timezone) on table public.users_profile to authenticated;
 grant all on table public.users_profile to service_role;
 
 create policy users_profile_select_own
@@ -37,6 +39,9 @@ begin
   return new;
 end;
 $$;
+
+-- Only the trigger calls this function; nobody needs to execute it directly.
+revoke execute on function public.handle_new_user() from public, anon, authenticated;
 
 create trigger on_auth_user_created
   after insert on auth.users
