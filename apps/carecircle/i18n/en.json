@@ -6,5 +6,21 @@
   "placeholder": {
     "title": "CareCircle",
     "subtitle": "Shared family care plan shell ready."
+  },
+  "tokensPreview": {
+    "title": "Design Tokens",
+    "schemeLight": "Active scheme: Light",
+    "schemeDark": "Active scheme: Dark",
+    "modeSystem": "System",
+    "modeLight": "Light",
+    "modeDark": "Dark",
+    "modeSystemA11y": "Follow system colour scheme",
+    "modeLightA11y": "Preview light colour scheme",
+    "modeDarkA11y": "Preview dark colour scheme",
+    "colorsHeading": "Colours",
+    "spacingHeading": "Spacing (4 px grid)",
+    "typographyHeading": "Type scale",
+    "radiiHeading": "Radii",
+    "sampleCopy": "Daily care plan at a glance"
   }
 }
