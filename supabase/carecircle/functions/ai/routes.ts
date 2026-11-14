@@ -36,29 +36,36 @@ export type AiRouteConfig = {
 const rxTask = 'carecircle.extractPrescription' as const;
 const visitTask = 'carecircle.summarizeVisit' as const;
 
+// Prices are list prices per 1M tokens, converted to microcents per 1k tokens
+// ($1 per 1M tokens = 100_000 microcents per 1k). Checked 2026-11-14:
+// - gemini-3.5-flash-lite: $0.30 in / $2.50 out (thinking billed as output),
+//   https://ai.google.dev/gemini-api/docs/pricing
+// - claude-sonnet-5-5: $2 in / $10 out, https://platform.claude.com/docs/en/about-claude/pricing
+// Re-check when a model changes. gemini-2.5-flash is closed to new API users and
+// claude-sonnet-4-20250514 was retired on 2026-06-15, so neither is used.
 export const routes: Record<AiTaskName, AiRouteConfig> = {
   [rxTask]: {
     task: rxTask,
     provider: 'gemini',
-    model: 'gemini/gemini-2.5-flash',
+    model: 'gemini/gemini-3.5-flash-lite',
     promptFile: 'packages/ai-gateway/prompts/carecircle/extractPrescription.md',
     promptVersion: 'v1',
     schema: rxSchema,
     timeoutMs: 25_000,
-    inputMicrocentsPer1k: 15_000,
-    outputMicrocentsPer1k: 60_000,
+    inputMicrocentsPer1k: 30_000,
+    outputMicrocentsPer1k: 250_000,
     costCurrency: 'USD',
   },
   [visitTask]: {
     task: visitTask,
     provider: 'anthropic',
-    model: 'anthropic/claude-sonnet-4-20250514',
+    model: 'anthropic/claude-sonnet-5-5',
     promptFile: 'packages/ai-gateway/prompts/carecircle/summarizeVisit.md',
     promptVersion: 'v1',
     schema: visitSchema,
     timeoutMs: 25_000,
-    inputMicrocentsPer1k: 300_000,
-    outputMicrocentsPer1k: 1_500_000,
+    inputMicrocentsPer1k: 200_000,
+    outputMicrocentsPer1k: 1_000_000,
     costCurrency: 'USD',
   },
 };

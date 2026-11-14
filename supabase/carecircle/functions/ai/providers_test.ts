@@ -681,3 +681,84 @@ Deno.test(
     assert(findings.length === 0, `Found potential API keys:\n${findings.join('\n')}`);
   },
 );
+
+Deno.test(
+  'default quota counter fails closed when unconfigured or when PostgREST fails',
+  async () => {
+    let providerCalls = 0;
+    const stub: AiProvider = {
+      generate: async (req) => {
+        providerCalls += 1;
+        return { output: FAKE_FIXTURES[req.task], inputTokens: 1, outputTokens: 1 };
+      },
+    };
+    const providers = { fake: stub, anthropic: stub, gemini: stub };
+    const env =
+      (serviceKey: string | undefined) =>
+      (k: string): string | undefined =>
+        k === 'SUPABASE_URL'
+          ? 'http://supabase.local'
+          : k === 'SUPABASE_SERVICE_ROLE_KEY'
+            ? serviceKey
+            : undefined;
+    const cases: Array<[string, ExtendedDeps]> = [
+      ['no service-role key', { getEnv: env(undefined), fetchImpl: async () => Response.json([]) }],
+      [
+        'PostgREST 500',
+        { getEnv: env('srk'), fetchImpl: async () => new Response('down', { status: 500 }) },
+      ],
+      ['no content-range', { getEnv: env('srk'), fetchImpl: async () => Response.json([]) }],
+    ];
+    for (const [label, deps] of cases) {
+      const body = await postAi({ ...deps, providers }, { useDefaultCounter: true });
+      assert(
+        body.ok === false && body.error?.code === 'PROVIDER_ERROR' && body.error.retryable === true,
+        `${label}: quota check must fail closed, got ${JSON.stringify(body)}`,
+      );
+    }
+    assert(providerCalls === 0, 'no provider call may happen when the quota cannot be checked');
+  },
+);
+
+Deno.test('real model replies: fenced JSON, Gemini thinking tokens and abort signal', async () => {
+  const task = 'carecircle.summarizeVisit' as const;
+  const fixture = JSON.stringify(FAKE_FIXTURES[task]);
+  let geminiSignal = false;
+  const mockFetch: typeof fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes('api.anthropic.com')) {
+      return Response.json({
+        content: [
+          { type: 'thinking', thinking: '' },
+          { type: 'text', text: '```json\n' + fixture + '\n```' },
+        ],
+        usage: { input_tokens: 10, output_tokens: 20 },
+      });
+    }
+    geminiSignal = init?.signal instanceof AbortSignal;
+    return Response.json({
+      candidates: [
+        { content: { parts: [{ text: 'thinking...', thought: true }, { text: fixture }] } },
+      ],
+      usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 50, thoughtsTokenCount: 400 },
+    });
+  };
+  const rows: ExtendedLogRow[] = [];
+  for (const provider of ['anthropic', 'gemini'] as const) {
+    const body = await postAi(
+      {
+        fetchImpl: mockFetch,
+        getEnv: () => 'test-key',
+        logCall: async (row) => void rows.push(row),
+        routeOverrides: { [task]: { provider, model: `${provider}/m` } },
+      },
+      { task, input: { text: 'x', knownMeds: [] } },
+    );
+    assert(body.ok === true, `${provider} reply must validate, got ${JSON.stringify(body)}`);
+  }
+  assert(geminiSignal, 'gemini adapter must pass the AbortSignal to fetch');
+  assert(
+    rows[1]?.output_tokens === 450,
+    `gemini thinking tokens are billed as output and must be counted, got ${rows[1]?.output_tokens}`,
+  );
+});

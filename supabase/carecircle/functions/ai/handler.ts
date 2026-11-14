@@ -89,7 +89,8 @@ function createAnthropicProvider(
         },
         body: JSON.stringify({
           model: stripModelPrefix(req.model),
-          max_tokens: 1024,
+          // Room for adaptive thinking plus the JSON answer; thinking tokens count here.
+          max_tokens: 4096,
           messages: [
             {
               role: 'user',
@@ -104,7 +105,7 @@ function createAnthropicProvider(
         content?: Array<{ type?: string; text?: string }>;
         usage?: { input_tokens?: number; output_tokens?: number };
       };
-      const text = data.content?.find((block) => typeof block.text === 'string')?.text ?? '';
+      const text = data.content?.find((block) => block.type === 'text')?.text ?? '';
       return {
         output: parseJsonText(text),
         inputTokens: data.usage?.input_tokens ?? 0,
@@ -147,14 +148,24 @@ function createGeminiProvider(
       });
       if (!res.ok) throw new Error(`Gemini HTTP ${res.status}`);
       const data = (await res.json()) as {
-        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-        usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
+        usageMetadata?: {
+          promptTokenCount?: number;
+          candidatesTokenCount?: number;
+          thoughtsTokenCount?: number;
+        };
       };
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      const parts = data.candidates?.[0]?.content?.parts ?? [];
+      const text = parts
+        .filter((part) => !part.thought)
+        .map((part) => part.text ?? '')
+        .join('');
+      const usage = data.usageMetadata;
       return {
         output: parseJsonText(text),
-        inputTokens: data.usageMetadata?.promptTokenCount ?? 0,
-        outputTokens: data.usageMetadata?.candidatesTokenCount ?? 0,
+        inputTokens: usage?.promptTokenCount ?? 0,
+        // Thinking tokens are billed as output, so they belong in the cost.
+        outputTokens: (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0),
       };
     },
   };
@@ -177,7 +188,8 @@ function createDefaultCountRecentCalls(
   return async (userId: string, sinceIso: string): Promise<number> => {
     const url = getEnv('SUPABASE_URL');
     const apikey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
-    if (!url || !apikey) return 0;
+    // Fail closed: a missing config must block AI calls, not skip the limit.
+    if (!url || !apikey) throw new Error('ai_calls counter not configured');
     const query = `user_id=eq.${encodeURIComponent(userId)}&created_at=gte.${encodeURIComponent(sinceIso)}&select=id`;
     const res = await fetchImpl(`${url}/rest/v1/ai_calls?${query}`, {
       method: 'GET',
@@ -191,9 +203,8 @@ function createDefaultCountRecentCalls(
     const range = res.headers.get('content-range') ?? '';
     const totalStr = range.split('/')[1];
     const parsed = totalStr ? Number.parseInt(totalStr, 10) : Number.NaN;
-    if (!Number.isNaN(parsed)) return parsed;
-    const rows = (await res.json()) as unknown[];
-    return Array.isArray(rows) ? rows.length : 0;
+    if (Number.isNaN(parsed)) throw new Error('ai_calls count missing');
+    return parsed;
   };
 }
 
