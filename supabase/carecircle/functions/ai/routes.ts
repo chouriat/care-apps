@@ -16,7 +16,7 @@ export const rxSchema = z.object({
 export const visitSchema = z.object({
   summary: z.string().min(1),
   followUps: z.array(z.object({ title: z.string().min(1) }).passthrough()),
-  medChanges: z.array(z.object({ action: z.string().min(1) }).passthrough()),
+  medChanges: z.array(z.object({ action: z.enum(['start', 'stop', 'change_dose']) }).passthrough()),
   questionsToAsk: z.array(z.string()),
 });
 

@@ -1,4 +1,4 @@
-import { createAiGatewayHandler, type AiCallLogRow } from './index.ts';
+import { createAiGatewayHandler, type AiCallLogRow } from './handler.ts';
 import { FAKE_FIXTURES, type AiProvider, type AiTaskName } from './routes.ts';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
@@ -25,13 +25,15 @@ async function invoke(opts: {
   input?: Record<string, unknown>;
   token?: string;
   outputs?: unknown[];
+  verifyJwt?: (token: string) => Promise<{ userId: string } | null>;
+  logCall?: (row: AiCallLogRow) => Promise<void>;
 }) {
   const aiCalls: AiCallLogRow[] = [];
   const attempts: number[] = [];
   const providers = opts.outputs ? { fake: sequenceProvider(opts.outputs, attempts) } : undefined;
   const handler = createAiGatewayHandler({
-    verifyJwt: async () => ({ userId: USER_ID }),
-    logCall: async (row) => void aiCalls.push(row),
+    verifyJwt: opts.verifyJwt ?? (async () => ({ userId: USER_ID })),
+    logCall: opts.logCall ?? (async (row) => void aiCalls.push(row)),
     providers,
   });
   const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -77,4 +79,24 @@ Deno.test('invalid output twice returns SCHEMA_INVALID and logs failure', async 
 Deno.test('no JWT returns UNAUTHENTICATED', async () => {
   const { body, aiCalls } = await invoke({});
   assert(!body.ok && body.error?.code === 'UNAUTHENTICATED' && aiCalls.length === 0, '401');
+});
+
+Deno.test(
+  'a token the auth server rejects returns UNAUTHENTICATED and calls no provider',
+  async () => {
+    const verifyJwt = async (token: string) => (token === 'good' ? { userId: USER_ID } : null);
+    const { body, aiCalls, attempts } = await invoke({
+      token: 'expired',
+      verifyJwt,
+      outputs: [{}],
+    });
+    assert(!body.ok && body.error?.code === 'UNAUTHENTICATED', 'rejected token');
+    assert(aiCalls.length === 0 && attempts.length === 0, 'no provider call, no log row');
+  },
+);
+
+Deno.test('a failed ai_calls insert does not turn a success into an error', async () => {
+  const logCall = () => Promise.reject(new Error('db down'));
+  const { body } = await invoke({ token: 'jwt', logCall });
+  assert(body.ok === true, 'still ok: true');
 });

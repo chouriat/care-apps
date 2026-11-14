@@ -32,7 +32,7 @@ export type AiGatewayRequest<I = unknown> = Record<'requestId', string> &
 export type AiFetch = (
   url: string,
   init: Record<'method' | 'body', string> & { headers: Record<string, string> },
-) => Promise<{ json(): Promise<unknown> }>;
+) => Promise<{ status: number; json(): Promise<unknown> }>;
 
 const err = (code: AiErrorCode, message: string, retryable = false): AiGatewayFailure => ({
   ok: false,
@@ -53,9 +53,12 @@ export function createAiGatewayClient(opts: {
       try {
         const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
         const res = await fetchFn(url, { method: 'POST', headers, body: JSON.stringify(req) });
-        const raw: unknown = await res.json();
+        // Supabase's own gateway answers a bad or expired JWT with 401 and its own body.
+        if (res.status === 401) return err('UNAUTHENTICATED', 'Session expired.');
+        const raw: unknown = await res.json().catch(() => null);
         const failed = failureSchema.safeParse(raw);
         if (failed.success) return failed.data;
+        if (res.status >= 500) return err('PROVIDER_ERROR', 'Gateway error.', true);
         const env = successEnvelopeSchema.safeParse(raw);
         const out = env.success ? schema.safeParse(env.data.output) : null;
         return env.success && out?.success
