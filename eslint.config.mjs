@@ -39,4 +39,17 @@ export default tseslint.config(
       'jest/no-disabled-tests': 'error',
     },
   },
+  {
+    // Maestro runScript files run in Maestro's JavaScript engine, which provides these globals.
+    files: ['apps/*/maestro/scripts/*.js'],
+    languageOptions: {
+      globals: {
+        http: 'readonly',
+        json: 'readonly',
+        output: 'readonly',
+        EMAIL: 'readonly',
+        MAILPIT_URL: 'readonly',
+      },
+    },
+  },
 );
