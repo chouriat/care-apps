@@ -1,0 +1,10 @@
+{
+  "common": {
+    "appName": "CareCircle",
+    "notMedicalAdvice": "CareCircle supports family care coordination and does not provide medical advice."
+  },
+  "placeholder": {
+    "title": "CareCircle",
+    "subtitle": "Shared family care plan shell ready."
+  }
+}
