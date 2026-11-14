@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "CareCircle",
+    "slug": "carecircle",
+    "version": "0.1.0",
+    "scheme": "carecircle",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": { "supportsTablet": true, "bundleIdentifier": "app.carecircle.mobile" },
+    "android": { "package": "app.carecircle.mobile" },
+    "plugins": ["expo-router"]
+  }
+}
