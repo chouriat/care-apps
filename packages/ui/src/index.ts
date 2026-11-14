@@ -1,1 +1,1 @@
-export const MIN_TOUCH_TARGET_PT: string = 44;
+export const MIN_TOUCH_TARGET_PT = 44;
