@@ -1,4 +1,4 @@
-import { createAiGatewayHandler, type AiCallLogRow } from './handler.ts';
+import { createAiGatewayHandler, type AiCallLogRow, type AiGatewayDeps } from './handler.ts';
 import { FAKE_FIXTURES, type AiProvider, type AiTaskName } from './routes.ts';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
@@ -20,6 +20,17 @@ const sequenceProvider = (outputs: unknown[], attempts: number[]): AiProvider =>
   },
 });
 
+const FAKE_ROUTE_OVERRIDES = {
+  'carecircle.extractPrescription': {
+    provider: 'fake' as const,
+    model: 'fake/extract-prescription-v1',
+  },
+  'carecircle.summarizeVisit': {
+    provider: 'fake' as const,
+    model: 'fake/summarize-visit-v1',
+  },
+};
+
 async function invoke(opts: {
   task?: AiTaskName;
   input?: Record<string, unknown>;
@@ -31,11 +42,15 @@ async function invoke(opts: {
   const aiCalls: AiCallLogRow[] = [];
   const attempts: number[] = [];
   const providers = opts.outputs ? { fake: sequenceProvider(opts.outputs, attempts) } : undefined;
-  const handler = createAiGatewayHandler({
+  const deps = {
     verifyJwt: opts.verifyJwt ?? (async () => ({ userId: USER_ID })),
-    logCall: opts.logCall ?? (async (row) => void aiCalls.push(row)),
+    logCall: opts.logCall ?? (async (row: AiCallLogRow) => void aiCalls.push(row)),
     providers,
-  });
+    routeOverrides: FAKE_ROUTE_OVERRIDES,
+    // F-2b adds a per-user quota check; these tests are about the fake provider, not quota.
+    countRecentCalls: async () => 0,
+  };
+  const handler = createAiGatewayHandler(deps as AiGatewayDeps);
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (opts.token) headers.authorization = `Bearer ${opts.token}`;
   const task = opts.task ?? 'carecircle.extractPrescription';

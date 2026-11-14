@@ -32,9 +32,14 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
-      - run: deno test --node-modules-dir=none supabase/carecircle/functions/ai/
       - name: Bundle the app for iOS and Android
         run: pnpm --filter carecircle export:check
+      # Runs after the export so the API key search also scans the exported app bundle (F-2b).
+      # The live provider test skips here: CI has no ANTHROPIC_API_KEY or GEMINI_API_KEY.
+      - name: Edge Function tests
+        run: deno test --node-modules-dir=none --allow-read --allow-env --allow-write --no-prompt supabase/carecircle/functions/ai/
+        env:
+          CHECK_APP_BUNDLE: '1'
 
   db:
     runs-on: ubuntu-latest
