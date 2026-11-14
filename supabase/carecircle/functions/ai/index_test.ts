@@ -47,6 +47,8 @@ async function invoke(opts: {
     logCall: opts.logCall ?? (async (row: AiCallLogRow) => void aiCalls.push(row)),
     providers,
     routeOverrides: FAKE_ROUTE_OVERRIDES,
+    // F-2b adds a per-user quota check; these tests are about the fake provider, not quota.
+    countRecentCalls: async () => 0,
   };
   const handler = createAiGatewayHandler(deps as AiGatewayDeps);
   const headers: Record<string, string> = { 'content-type': 'application/json' };
