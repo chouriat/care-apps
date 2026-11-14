@@ -27,13 +27,13 @@ function stageProject() {
   const workDir = process.env.CARECIRCLE_SUPABASE_WORKDIR ?? join(tmpdir(), 'carecircle-supabase');
   const supabaseDir = join(workDir, 'supabase');
 
-  rmSync(supabaseDir, { recursive: true, force: true });
   mkdirSync(supabaseDir, { recursive: true });
   cpSync(join(carecircleDir, 'config.toml'), join(supabaseDir, 'config.toml'));
 
   for (const folder of ['migrations', 'functions', 'tests']) {
     const source = join(carecircleDir, folder);
     const target = join(supabaseDir, folder);
+    rmSync(target, { recursive: true, force: true });
     mkdirSync(target, { recursive: true });
     if (existsSync(source)) {
       cpSync(source, target, {
