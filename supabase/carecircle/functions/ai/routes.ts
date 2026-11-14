@@ -1,7 +1,7 @@
 import { z } from 'npm:zod@3.24.1';
 
 export type AiTaskName = 'carecircle.extractPrescription' | 'carecircle.summarizeVisit';
-export type AiProviderName = 'fake';
+export type AiProviderName = 'fake' | 'anthropic' | 'gemini';
 
 export const rxSchema = z.object({
   name: z.string().min(1),
@@ -20,29 +20,74 @@ export const visitSchema = z.object({
   questionsToAsk: z.array(z.string()),
 });
 
-const defineRoute = (task: AiTaskName, model: string, schema: z.ZodTypeAny) => ({
-  task,
-  provider: 'fake' as AiProviderName,
-  model,
-  promptFile: `packages/ai-gateway/prompts/${task.replace('.', '/')}.md`,
-  promptVersion: 'v1',
-  schema,
-  timeoutMs: 25_000,
-});
+export type AiRouteConfig = {
+  task: AiTaskName;
+  provider: AiProviderName;
+  model: string;
+  promptFile: string;
+  promptVersion: string;
+  schema: z.ZodTypeAny;
+  timeoutMs: number;
+  inputMicrocentsPer1k: number;
+  outputMicrocentsPer1k: number;
+  costCurrency: string;
+};
 
-export type AiRouteConfig = ReturnType<typeof defineRoute>;
 const rxTask = 'carecircle.extractPrescription' as const;
 const visitTask = 'carecircle.summarizeVisit' as const;
 
 export const routes: Record<AiTaskName, AiRouteConfig> = {
-  [rxTask]: defineRoute(rxTask, 'fake/extract-prescription-v1', rxSchema),
-  [visitTask]: defineRoute(visitTask, 'fake/summarize-visit-v1', visitSchema),
+  [rxTask]: {
+    task: rxTask,
+    provider: 'gemini',
+    model: 'gemini/gemini-2.5-flash',
+    promptFile: 'packages/ai-gateway/prompts/carecircle/extractPrescription.md',
+    promptVersion: 'v1',
+    schema: rxSchema,
+    timeoutMs: 25_000,
+    inputMicrocentsPer1k: 15_000,
+    outputMicrocentsPer1k: 60_000,
+    costCurrency: 'USD',
+  },
+  [visitTask]: {
+    task: visitTask,
+    provider: 'anthropic',
+    model: 'anthropic/claude-sonnet-4-20250514',
+    promptFile: 'packages/ai-gateway/prompts/carecircle/summarizeVisit.md',
+    promptVersion: 'v1',
+    schema: visitSchema,
+    timeoutMs: 25_000,
+    inputMicrocentsPer1k: 300_000,
+    outputMicrocentsPer1k: 1_500_000,
+    costCurrency: 'USD',
+  },
 };
 
-export type AiProviderRequest = AiRouteConfig &
-  Record<'attempt', 1 | 2> & { input: Record<string, unknown> };
-export type AiProviderResult = Record<'inputTokens' | 'outputTokens', number> & { output: unknown };
-export type AiProvider = { generate: (req: AiProviderRequest) => Promise<AiProviderResult> };
+export function estimateCostMicrocents(
+  route: Pick<AiRouteConfig, 'inputMicrocentsPer1k' | 'outputMicrocentsPer1k'>,
+  inputTokens: number,
+  outputTokens: number,
+): number {
+  const totalThousandths =
+    inputTokens * route.inputMicrocentsPer1k + outputTokens * route.outputMicrocentsPer1k;
+  return Math.floor((totalThousandths + 500) / 1_000);
+}
+
+export type AiProviderRequest = AiRouteConfig & {
+  attempt: 1 | 2;
+  input: Record<string, unknown>;
+  signal?: AbortSignal;
+};
+
+export type AiProviderResult = {
+  output: unknown;
+  inputTokens: number;
+  outputTokens: number;
+};
+
+export type AiProvider = {
+  generate: (req: AiProviderRequest) => Promise<AiProviderResult>;
+};
 
 export const FAKE_FIXTURES: Record<AiTaskName, unknown> = {
   [rxTask]: {

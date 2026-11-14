@@ -1,5 +1,13 @@
 import { z } from 'npm:zod@3.24.1';
-import { fakeProvider, routes, type AiProvider, type AiTaskName } from './routes.ts';
+import {
+  estimateCostMicrocents,
+  fakeProvider,
+  routes,
+  type AiProvider,
+  type AiProviderName,
+  type AiRouteConfig,
+  type AiTaskName,
+} from './routes.ts';
 
 export type AiErrorCode =
   | 'UNAUTHENTICATED'
@@ -8,17 +16,34 @@ export type AiErrorCode =
   | 'SCHEMA_INVALID'
   | 'PROVIDER_ERROR';
 
-export type AiCallLogRow = Record<'request_id' | 'user_id' | 'model' | 'prompt_version', string> &
-  Record<'latency_ms' | 'input_tokens' | 'output_tokens', number> &
-  Record<'validation_ok', boolean> &
-  Record<'error_code', AiErrorCode | null> & { task: AiTaskName };
+export type AiCallLogRow = {
+  request_id: string;
+  user_id: string;
+  task: AiTaskName;
+  model: string;
+  prompt_version: string;
+  latency_ms: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost_microcents: number;
+  cost_currency: string;
+  validation_ok: boolean;
+  error_code: AiErrorCode | null;
+};
 
 export type AiGatewayDeps = {
-  providers?: { fake?: AiProvider };
+  providers?: Partial<Record<AiProviderName, AiProvider>>;
   verifyJwt?: (token: string) => Promise<{ userId: string } | null>;
   logCall?: (row: AiCallLogRow) => Promise<void>;
+  countRecentCalls?: (userId: string, sinceIso: string) => Promise<number>;
+  routeOverrides?: Partial<Record<AiTaskName, Partial<AiRouteConfig>>>;
+  fetchImpl?: typeof fetch;
+  getEnv?: (key: string) => string | undefined;
   now?: () => number;
 };
+
+const HOURLY_CALL_LIMIT = 60;
+const ONE_HOUR_MS = 3_600_000;
 
 const requestEnvelopeSchema = z.object({
   task: z.enum(['carecircle.extractPrescription', 'carecircle.summarizeVisit']),
@@ -32,6 +57,109 @@ const json = (body: unknown, status = 200): Response =>
 const fail = (code: AiErrorCode, message: string, retryable: boolean, status = 200): Response =>
   json({ ok: false, error: { code, message, retryable } }, status);
 
+const stripModelPrefix = (model: string): string => {
+  const slashIndex = model.indexOf('/');
+  return slashIndex >= 0 ? model.slice(slashIndex + 1) : model;
+};
+
+function parseJsonText(rawText: string): unknown {
+  const trimmed = rawText.trim();
+  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
+  try {
+    return JSON.parse(fenced?.[1] ?? trimmed);
+  } catch {
+    return null;
+  }
+}
+
+function createAnthropicProvider(
+  fetchImpl: typeof fetch,
+  getEnv: (key: string) => string | undefined,
+): AiProvider {
+  return {
+    generate: async (req) => {
+      const apiKey = getEnv('ANTHROPIC_API_KEY');
+      if (!apiKey) throw new Error('Missing ANTHROPIC_API_KEY');
+      const res = await fetchImpl('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: stripModelPrefix(req.model),
+          max_tokens: 1024,
+          messages: [
+            {
+              role: 'user',
+              content: `Task: ${req.task}\nReturn JSON only.\nInput: ${JSON.stringify(req.input)}`,
+            },
+          ],
+        }),
+        signal: req.signal,
+      });
+      if (!res.ok) throw new Error(`Anthropic HTTP ${res.status}`);
+      const data = (await res.json()) as {
+        content?: Array<{ type?: string; text?: string }>;
+        usage?: { input_tokens?: number; output_tokens?: number };
+      };
+      const text = data.content?.find((block) => typeof block.text === 'string')?.text ?? '';
+      return {
+        output: parseJsonText(text),
+        inputTokens: data.usage?.input_tokens ?? 0,
+        outputTokens: data.usage?.output_tokens ?? 0,
+      };
+    },
+  };
+}
+
+function createGeminiProvider(
+  fetchImpl: typeof fetch,
+  getEnv: (key: string) => string | undefined,
+): AiProvider {
+  return {
+    generate: async (req) => {
+      const apiKey = getEnv('GEMINI_API_KEY');
+      if (!apiKey) throw new Error('Missing GEMINI_API_KEY');
+      const modelId = stripModelPrefix(req.model);
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`;
+      const res = await fetchImpl(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  text: `Task: ${req.task}\nReturn JSON only.\nInput: ${JSON.stringify(req.input)}`,
+                },
+              ],
+            },
+          ],
+          generationConfig: { responseMimeType: 'application/json' },
+        }),
+        signal: req.signal,
+      });
+      if (!res.ok) throw new Error(`Gemini HTTP ${res.status}`);
+      const data = (await res.json()) as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+      };
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      return {
+        output: parseJsonText(text),
+        inputTokens: data.usageMetadata?.promptTokenCount ?? 0,
+        outputTokens: data.usageMetadata?.candidatesTokenCount ?? 0,
+      };
+    },
+  };
+}
+
 async function defaultVerifyJwt(token: string): Promise<{ userId: string } | null> {
   const url = Deno.env.get('SUPABASE_URL');
   const apikey = Deno.env.get('SUPABASE_ANON_KEY');
@@ -40,6 +168,33 @@ async function defaultVerifyJwt(token: string): Promise<{ userId: string } | nul
   const res = await fetch(`${url}/auth/v1/user`, { headers });
   const data = res.ok ? ((await res.json()) as { id?: unknown }) : null;
   return typeof data?.id === 'string' ? { userId: data.id } : null;
+}
+
+function createDefaultCountRecentCalls(
+  fetchImpl: typeof fetch,
+  getEnv: (key: string) => string | undefined,
+) {
+  return async (userId: string, sinceIso: string): Promise<number> => {
+    const url = getEnv('SUPABASE_URL');
+    const apikey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+    if (!url || !apikey) return 0;
+    const query = `user_id=eq.${encodeURIComponent(userId)}&created_at=gte.${encodeURIComponent(sinceIso)}&select=id`;
+    const res = await fetchImpl(`${url}/rest/v1/ai_calls?${query}`, {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${apikey}`,
+        apikey,
+        prefer: 'count=exact',
+      },
+    });
+    if (!res.ok) throw new Error(`ai_calls count failed: ${res.status}`);
+    const range = res.headers.get('content-range') ?? '';
+    const totalStr = range.split('/')[1];
+    const parsed = totalStr ? Number.parseInt(totalStr, 10) : Number.NaN;
+    if (!Number.isNaN(parsed)) return parsed;
+    const rows = (await res.json()) as unknown[];
+    return Array.isArray(rows) ? rows.length : 0;
+  };
 }
 
 async function defaultLogCall(row: AiCallLogRow): Promise<void> {
@@ -56,8 +211,21 @@ async function defaultLogCall(row: AiCallLogRow): Promise<void> {
 }
 
 export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
-  const { verifyJwt = defaultVerifyJwt, logCall = defaultLogCall, now = Date.now } = deps;
-  const fake = deps.providers?.fake ?? fakeProvider;
+  const {
+    verifyJwt = defaultVerifyJwt,
+    logCall = defaultLogCall,
+    fetchImpl = fetch,
+    getEnv = (key: string) => Deno.env.get(key),
+    now = Date.now,
+  } = deps;
+  const countRecentCalls =
+    deps.countRecentCalls ?? createDefaultCountRecentCalls(fetchImpl, getEnv);
+
+  const providerMap: Record<AiProviderName, AiProvider> = {
+    fake: deps.providers?.fake ?? fakeProvider,
+    anthropic: deps.providers?.anthropic ?? createAnthropicProvider(fetchImpl, getEnv),
+    gemini: deps.providers?.gemini ?? createGeminiProvider(fetchImpl, getEnv),
+  };
 
   return async (req: Request): Promise<Response> => {
     const match = /^Bearer\s+(.+)$/i.exec((req.headers.get('authorization') ?? '').trim());
@@ -73,22 +241,57 @@ export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
     if (!parsedReq.success) return fail('INPUT_INVALID', 'Invalid request envelope.', false, 400);
 
     const { task, input, requestId: request_id } = parsedReq.data;
-    const route = routes[task];
+    const baseRoute = routes[task];
+    const override = deps.routeOverrides?.[task];
+    const route: AiRouteConfig = override ? { ...baseRoute, ...override } : baseRoute;
+
+    const sinceIso = new Date(now() - ONE_HOUR_MS).toISOString();
+    let recentCount = 0;
+    try {
+      recentCount = await countRecentCalls(authUser.userId, sinceIso);
+    } catch {
+      return fail('PROVIDER_ERROR', 'Rate limit check unavailable.', true, 503);
+    }
+    if (recentCount >= HOURLY_CALL_LIMIT) {
+      return fail('QUOTA_EXCEEDED', 'Hourly AI request limit exceeded.', false, 429);
+    }
+
+    const provider = providerMap[route.provider];
     const { model, promptVersion: prompt_version, schema } = route;
     const startedAt = now();
-    let [input_tokens, output_tokens] = [0, 0];
-    const meta = { request_id, user_id: authUser.userId, task, model, prompt_version };
+    let input_tokens = 0;
+    let output_tokens = 0;
+
     const record = (validation_ok: boolean, error_code: AiErrorCode | null) => {
-      const toks = { latency_ms: Math.max(0, now() - startedAt), input_tokens, output_tokens };
-      // A logging failure must never change the answer the user gets. Log codes only.
-      return logCall({ ...meta, ...toks, validation_ok, error_code }).catch(() =>
-        console.error('ai_calls log failed', { request_id, task }),
-      );
+      const latency_ms = Math.max(0, now() - startedAt);
+      const estimated_cost_microcents = estimateCostMicrocents(route, input_tokens, output_tokens);
+      const row: AiCallLogRow = {
+        request_id,
+        user_id: authUser.userId,
+        task,
+        model,
+        prompt_version,
+        latency_ms,
+        input_tokens,
+        output_tokens,
+        estimated_cost_microcents,
+        cost_currency: route.costCurrency,
+        validation_ok,
+        error_code,
+      };
+      return logCall(row).catch(() => console.error('ai_calls log failed', { request_id, task }));
     };
 
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), route.timeoutMs);
     try {
       for (const attempt of [1, 2] as const) {
-        const res = await fake.generate({ ...route, input, attempt });
+        const res = await provider.generate({
+          ...route,
+          input,
+          attempt,
+          signal: controller.signal,
+        });
         input_tokens += res.inputTokens;
         output_tokens += res.outputTokens;
         const validated = schema.safeParse(res.output);
@@ -103,6 +306,8 @@ export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
     } catch {
       await record(false, 'PROVIDER_ERROR');
       return fail('PROVIDER_ERROR', 'Provider call failed.', true);
+    } finally {
+      clearTimeout(timer);
     }
   };
 }
