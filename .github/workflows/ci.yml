@@ -24,11 +24,15 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: 2.1.4
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      - run: deno test --node-modules-dir=none supabase/carecircle/functions/ai/
       - name: Bundle the app for iOS and Android
         run: pnpm --filter carecircle export:check
 
