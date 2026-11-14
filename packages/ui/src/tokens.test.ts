@@ -1,19 +1,11 @@
 import { colors, contrastRatio, radii, spacing, typography, type ColorPalette } from '../tokens';
 import { resolveColorScheme } from './theme';
 
+// Every text colour on every surface it may sit on.
+const SURFACES = ['background', 'surface', 'surfaceMuted', 'warningSurface'] as const;
+const FG = ['textPrimary', 'textSecondary', 'textMuted', 'primary', 'success', 'danger'] as const;
 const TEXT_CONTRAST_PAIRS: ReadonlyArray<readonly [keyof ColorPalette, keyof ColorPalette]> = [
-  ['textPrimary', 'background'],
-  ['textPrimary', 'surface'],
-  ['textPrimary', 'surfaceMuted'],
-  ['textSecondary', 'background'],
-  ['textSecondary', 'surface'],
-  ['textSecondary', 'surfaceMuted'],
-  ['textMuted', 'background'],
-  ['textMuted', 'surface'],
-  ['textMuted', 'surfaceMuted'],
-  ['danger', 'background'],
-  ['danger', 'surface'],
-  ['danger', 'surfaceMuted'],
+  ...FG.flatMap((fg) => SURFACES.map((bg) => [fg, bg] as const)),
   ['onPrimary', 'primary'],
   ['onWarningSurface', 'warningSurface'],
   ['onDanger', 'danger'],

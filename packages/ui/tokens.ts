@@ -9,7 +9,7 @@ const lightColors = {
   textMuted: '#475569',
   primary: '#0F766E',
   onPrimary: '#FFFFFF',
-  success: '#15803D',
+  success: '#166534',
   warningSurface: '#FEF3C7',
   onWarningSurface: '#92400E',
   danger: '#B91C1C',

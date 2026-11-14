@@ -5,6 +5,10 @@ import { StyleSheet } from 'react-native';
 import TokensPreviewScreen from '../app/tokens';
 import en from '../i18n/en.json';
 
+// The swatch list prints every hex, so check the painted screen colour, not just the text.
+const screenBackground = () =>
+  StyleSheet.flatten(screen.getByLabelText(en.tokensPreview.title).props.style).backgroundColor;
+
 describe('TokensPreviewScreen', () => {
   afterEach(() => jest.restoreAllMocks());
 
@@ -17,7 +21,7 @@ describe('TokensPreviewScreen', () => {
     );
     expect(screen.getByText(en.tokensPreview.title)).toBeTruthy();
     expect(screen.getByText(en.tokensPreview.schemeLight)).toBeTruthy();
-    expect(screen.getByText(colors.light.background)).toBeTruthy();
+    expect(screenBackground()).toBe(colors.light.background);
     expect(screen.getByText(colors.light.surfaceMuted)).toBeTruthy();
   });
 
@@ -29,7 +33,7 @@ describe('TokensPreviewScreen', () => {
       </ThemeProvider>,
     );
     expect(screen.getByText(en.tokensPreview.schemeDark)).toBeTruthy();
-    expect(screen.getByText(colors.dark.background)).toBeTruthy();
+    expect(screenBackground()).toBe(colors.dark.background);
 
     const lightButton = screen.getByLabelText(en.tokensPreview.modeLightA11y);
     expect(StyleSheet.flatten(lightButton.props.style)).toEqual(
@@ -37,6 +41,6 @@ describe('TokensPreviewScreen', () => {
     );
     await fireEvent.press(lightButton);
     expect(screen.getByText(en.tokensPreview.schemeLight)).toBeTruthy();
-    expect(screen.getByText(colors.light.background)).toBeTruthy();
+    expect(screenBackground()).toBe(colors.light.background);
   });
 });
