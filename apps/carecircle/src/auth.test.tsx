@@ -1,8 +1,7 @@
 import * as UI from '@carecircle/ui';
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { fireEvent, render, screen, within } from '@testing-library/react-native';
 import type { ComponentType, ReactNode } from 'react';
 import { StyleSheet, Text } from 'react-native';
-import * as LayoutModule from '../app/_layout';
 
 type AuthProvider = 'apple' | 'google';
 type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
@@ -22,7 +21,6 @@ interface AuthGateProps {
   status: AuthStatus;
   pathname: string;
   onRedirect?: (targetRoute: string) => void;
-  signInProps?: SignInScreenProps;
   children: ReactNode;
 }
 
@@ -31,10 +29,12 @@ interface AuthLayoutContract {
   AuthGate: ComponentType<AuthGateProps>;
 }
 
+// AGENTS.md section 4: UI pieces live in src/features/<feature>/components, not in route files.
 function requireAuthLayout(): AuthLayoutContract {
-  const candidate = LayoutModule as Partial<AuthLayoutContract>;
+  // Loaded at runtime so this tests-only PR still typechecks before the code exists.
+  const candidate = jest.requireActual<Partial<AuthLayoutContract>>('./features/auth/components');
   if (!candidate.SignInScreen || !candidate.AuthGate) {
-    throw new Error('F-4 SignInScreen and AuthGate are not exported from app/_layout yet.');
+    throw new Error('F-4 SignInScreen and AuthGate are not exported from features/auth yet.');
   }
   return candidate as AuthLayoutContract;
 }
@@ -53,7 +53,6 @@ describe('F-4 Auth screen and route protection (apps/carecircle)', () => {
     );
 
     expect(onRedirect).toHaveBeenCalledWith('/(auth)/sign-in');
-    expect(screen.getByTestId('sign-in-screen')).toBeTruthy();
     expect(screen.queryByTestId('protected-route-content')).toBeNull();
 
     // Deep link while signed out must also redirect to /(auth)/sign-in.
@@ -67,8 +66,31 @@ describe('F-4 Auth screen and route protection (apps/carecircle)', () => {
     );
 
     expect(onRedirect).toHaveBeenCalledWith('/(auth)/sign-in');
-    expect(screen.getByTestId('sign-in-screen')).toBeTruthy();
     expect(screen.queryByTestId('protected-route-content')).toBeNull();
+
+    // While the stored session is still loading, show neither protected content nor a redirect.
+    onRedirect.mockClear();
+    await rerender(
+      <UI.ThemeProvider>
+        <AuthGate status="loading" pathname="/gallery" onRedirect={onRedirect}>
+          <Text testID="protected-route-content">Protected Gallery Screen</Text>
+        </AuthGate>
+      </UI.ThemeProvider>,
+    );
+    expect(onRedirect).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('protected-route-content')).toBeNull();
+    expect(screen.getByTestId('auth-loading')).toBeTruthy();
+
+    // The sign-in route itself (usePathname() reports '/sign-in') renders without a redirect loop.
+    await rerender(
+      <UI.ThemeProvider>
+        <AuthGate status="unauthenticated" pathname="/sign-in" onRedirect={onRedirect}>
+          <Text testID="sign-in-route-content">Sign-in route</Text>
+        </AuthGate>
+      </UI.ThemeProvider>,
+    );
+    expect(onRedirect).not.toHaveBeenCalled();
+    expect(screen.getByTestId('sign-in-route-content')).toBeTruthy();
 
     // Signed-in user at a deep link is not redirected and sees the protected route.
     onRedirect.mockClear();
@@ -82,6 +104,10 @@ describe('F-4 Auth screen and route protection (apps/carecircle)', () => {
 
     expect(onRedirect).not.toHaveBeenCalled();
     expect(screen.getByTestId('protected-route-content')).toBeTruthy();
+
+    // The spec's route exists as a real Expo Router file.
+    const signInRoute = jest.requireActual<{ default?: unknown }>('../app/(auth)/sign-in');
+    expect(typeof signInRoute.default).toBe('function');
   });
 
   it('renders SignInScreen controls with >= 44 pt targets and triggers email, Apple, and Google sign-in', async () => {
@@ -112,10 +138,10 @@ describe('F-4 Auth screen and route protection (apps/carecircle)', () => {
     }
 
     await fireEvent.changeText(emailInput, 'helper.omar@example.com');
-    const [magicLinkButton, appleButton, googleButton] = buttons;
-    if (!magicLinkButton || !appleButton || !googleButton) {
-      throw new Error('Expected magic link, Apple, and Google sign-in buttons');
-    }
+    // Found by their accessibility labels, not by position.
+    const magicLinkButton = screen.getByRole('button', { name: /magic link|email/i });
+    const appleButton = screen.getByRole('button', { name: /apple/i });
+    const googleButton = screen.getByRole('button', { name: /google/i });
 
     await fireEvent.press(magicLinkButton);
     expect(onSendMagicLink).toHaveBeenCalledWith('helper.omar@example.com');
@@ -143,9 +169,7 @@ describe('F-4 Auth screen and route protection (apps/carecircle)', () => {
         <SignInScreen hasError onRetry={onRetry} />
       </UI.ThemeProvider>,
     );
-    expect(screen.getByTestId('sign-in-error')).toBeTruthy();
-    const errorRetryButton = screen.getAllByRole('button')[0];
-    if (!errorRetryButton) throw new Error('Expected error retry button');
+    const errorRetryButton = within(screen.getByTestId('sign-in-error')).getByRole('button');
     await fireEvent.press(errorRetryButton);
     expect(onRetry).toHaveBeenCalledTimes(1);
 
@@ -155,9 +179,7 @@ describe('F-4 Auth screen and route protection (apps/carecircle)', () => {
         <SignInScreen isOffline onRetry={onRetry} />
       </UI.ThemeProvider>,
     );
-    expect(screen.getByTestId('sign-in-offline')).toBeTruthy();
-    const offlineRetryButton = screen.getAllByRole('button')[0];
-    if (!offlineRetryButton) throw new Error('Expected offline retry button');
+    const offlineRetryButton = within(screen.getByTestId('sign-in-offline')).getByRole('button');
     await fireEvent.press(offlineRetryButton);
     expect(onRetry).toHaveBeenCalledTimes(1);
 

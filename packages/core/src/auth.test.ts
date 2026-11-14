@@ -46,6 +46,10 @@ interface SupabaseAuthAdapter {
     provider: AuthProvider;
     options?: { redirectTo?: string };
   }): Promise<{ data?: { url?: string | null }; error: { message: string; code?: string } | null }>;
+  exchangeCodeForSession(code: string): Promise<{
+    data: { session: AuthSession | null };
+    error: { message: string; code?: string } | null;
+  }>;
   signOut(): Promise<{ error: { message: string; code?: string } | null }>;
 }
 
@@ -64,6 +68,7 @@ interface AuthController {
   signInWithEmail(email: string): Promise<boolean>;
   signInWithOAuth(provider: AuthProvider): Promise<boolean>;
   receiveSession(session: AuthSession): Promise<void>;
+  handleAuthCallback(url: string): Promise<boolean>;
   signOut(): Promise<void>;
 }
 
@@ -78,9 +83,26 @@ interface AuthModuleContract {
     redirectUrl?: string;
   }): AuthController;
   resolveAuthRedirect(status: AuthStatus, pathname: string): string | null;
+  buildSupabaseAuthOptions(adapter: SecureStoreAdapter): {
+    storage: ChunkedSessionStorage;
+    storageKey: string;
+    persistSession: boolean;
+    autoRefreshToken: boolean;
+    detectSessionInUrl: boolean;
+    flowType: string;
+  };
 }
 
 const SECURE_STORE_LIMIT_BYTES = 2048;
+
+function utf8Bytes(value: string): number {
+  let bytes = 0;
+  for (const char of value) {
+    const codePoint = char.codePointAt(0) ?? 0;
+    bytes += codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
+  }
+  return bytes;
+}
 
 function requireAuthModule(): AuthModuleContract {
   const candidate = CoreModule as Partial<AuthModuleContract>;
@@ -88,6 +110,7 @@ function requireAuthModule(): AuthModuleContract {
     !candidate.createAuthController ||
     !candidate.createChunkedSecureStorage ||
     !candidate.resolveAuthRedirect ||
+    !candidate.buildSupabaseAuthOptions ||
     !candidate.SESSION_STORAGE_KEY
   ) {
     throw new Error('F-4 auth exports are not implemented in @carecircle/core yet.');
@@ -102,10 +125,10 @@ function createInMemorySecureStore() {
       return backingMap.get(key) ?? null;
     },
     async setItemAsync(key: string, value: string): Promise<void> {
-      if (value.length > SECURE_STORE_LIMIT_BYTES) {
-        throw new Error(
-          `SecureStore value for ${key} exceeds ${SECURE_STORE_LIMIT_BYTES} bytes (${value.length})`,
-        );
+      // The SecureStore limit is in bytes, not characters (names and emails can be non-ASCII).
+      const bytes = utf8Bytes(value);
+      if (bytes > SECURE_STORE_LIMIT_BYTES) {
+        throw new Error(`SecureStore value for ${key} exceeds ${SECURE_STORE_LIMIT_BYTES} bytes`);
       }
       backingMap.set(key, value);
     },
@@ -127,7 +150,12 @@ function buildRealisticLargeSession(): AuthSession {
       id: '550e8400-e29b-41d4-a716-446655440000',
       email: 'caregiver.nadia@example.com',
       app_metadata: { provider: 'email', providers: ['email', 'apple', 'google'] },
-      user_metadata: { display_name: 'Nadia Caregiver', locale: 'en', timezone: 'Europe/Paris' },
+      // Multi-byte characters: chunking by string length instead of bytes must fail.
+      user_metadata: {
+        display_name: 'Nadïa Ébène Caregiver 👵🏽'.repeat(40),
+        locale: 'fr',
+        timezone: 'Europe/Paris',
+      },
     },
   };
 }
@@ -136,6 +164,7 @@ function createMockSupabaseAuth(overrides: Partial<SupabaseAuthAdapter> = {}): S
   return {
     signInWithOtp: async () => ({ error: null }),
     signInWithOAuth: async () => ({ data: { url: 'https://supabase.local/oauth' }, error: null }),
+    exchangeCodeForSession: async () => ({ data: { session: null }, error: null }),
     signOut: async () => ({ error: null }),
     ...overrides,
   };
@@ -161,7 +190,7 @@ describe('F-4 Auth core (@carecircle/core)', () => {
     expect(controller.getState().status).toBe('authenticated');
     expect(backingMap.size).toBeGreaterThanOrEqual(2);
     for (const storedValue of backingMap.values()) {
-      expect(storedValue.length).toBeLessThanOrEqual(SECURE_STORE_LIMIT_BYTES);
+      expect(utf8Bytes(storedValue)).toBeLessThanOrEqual(SECURE_STORE_LIMIT_BYTES);
     }
 
     await controller.signOut();
@@ -205,20 +234,28 @@ describe('F-4 Auth core (@carecircle/core)', () => {
     expect(corruptedState.session).toBeNull();
     expect(backingMap.size).toBe(0);
 
-    // Partial chunk (missing chunk 1 of a multi-chunk session) must also sign out cleanly.
+    // Losing any one stored key of a multi-chunk session (whatever the key naming) must sign out
+    // cleanly and leave no token fragments behind.
     await writer.receiveSession(largeSession);
-    expect(backingMap.delete(`${auth.SESSION_STORAGE_KEY}.__chunk_1`)).toBe(true);
-    const partialReader = auth.createAuthController({
-      secureStore: adapter,
-      supabaseAuth: createMockSupabaseAuth(),
-    });
-    const partialState = await partialReader.initialize();
-    expect(partialState.status).toBe('unauthenticated');
-    expect(partialState.session).toBeNull();
-    expect(backingMap.size).toBe(0);
+    const storedKeys = [...backingMap.keys()];
+    expect(storedKeys.length).toBeGreaterThanOrEqual(2);
+    for (const lostKey of storedKeys) {
+      await writer.receiveSession(largeSession);
+      expect(backingMap.delete(lostKey)).toBe(true);
+      const partialReader = auth.createAuthController({
+        secureStore: adapter,
+        supabaseAuth: createMockSupabaseAuth(),
+      });
+      const partialState = await partialReader.initialize();
+      expect(partialState.status).toBe('unauthenticated');
+      expect(partialState.session).toBeNull();
+      expect(backingMap.size).toBe(0);
+    }
 
     // Valid JSON missing required session fields (partial object) must also sign out and clear storage.
-    await chunkedStorage.setItem(auth.SESSION_STORAGE_KEY, JSON.stringify({ access_token: 'tok' }));
+    const { refresh_token: _omitted, ...withoutRefresh } = largeSession;
+    expect(_omitted).toBeTruthy();
+    await chunkedStorage.setItem(auth.SESSION_STORAGE_KEY, JSON.stringify(withoutRefresh));
     const incompleteReader = auth.createAuthController({
       secureStore: adapter,
       supabaseAuth: createMockSupabaseAuth(),
@@ -233,8 +270,14 @@ describe('F-4 Auth core (@carecircle/core)', () => {
     const auth = requireAuthModule();
     const { adapter } = createInMemorySecureStore();
     const capturedCalls: string[] = [];
+    // JSON.stringify turns an Error into {}, which would hide a leaked message, so capture
+    // Error messages and stacks explicitly.
     const recordCall = (...args: unknown[]) => {
-      capturedCalls.push(JSON.stringify(args));
+      capturedCalls.push(
+        JSON.stringify(args, (_key, value: unknown) =>
+          value instanceof Error ? `${value.name}: ${value.message} ${value.stack ?? ''}` : value,
+        ),
+      );
     };
 
     type ConsoleLike = Record<
@@ -263,25 +306,51 @@ describe('F-4 Auth core (@carecircle/core)', () => {
     const sensitiveUserId = '99999999-8888-4777-8666-555555555555';
 
     let shouldFail = false;
+    let shouldThrow = false;
+    const leakyError = () =>
+      new Error(`network down for ${sensitiveEmail} ${sensitiveAccessToken}`);
     const supabaseAuth = createMockSupabaseAuth({
-      signInWithOtp: async () =>
-        shouldFail
+      exchangeCodeForSession: async () => {
+        if (shouldThrow) throw leakyError();
+        return shouldFail
+          ? { data: { session: null }, error: { message: `bad code for ${sensitiveEmail}` } }
+          : {
+              data: {
+                session: {
+                  access_token: sensitiveAccessToken,
+                  refresh_token: sensitiveRefreshToken,
+                  user: { id: sensitiveUserId, email: sensitiveEmail },
+                },
+              },
+              error: null,
+            };
+      },
+      signOut: async () => {
+        if (shouldThrow) throw leakyError();
+        return { error: null };
+      },
+      signInWithOtp: async () => {
+        if (shouldThrow) throw leakyError();
+        return shouldFail
           ? {
               error: {
                 message: `OTP failed for ${sensitiveEmail} with token ${sensitiveAccessToken}`,
                 code: 'OTP_REJECTED',
               },
             }
-          : { error: null },
-      signInWithOAuth: async () =>
-        shouldFail
+          : { error: null };
+      },
+      signInWithOAuth: async () => {
+        if (shouldThrow) throw leakyError();
+        return shouldFail
           ? {
               error: {
                 message: `OAuth failed for ${sensitiveEmail}`,
                 code: 'OAUTH_REJECTED',
               },
             }
-          : { data: { url: 'https://supabase.local/oauth' }, error: null },
+          : { data: { url: 'https://supabase.local/oauth' }, error: null };
+      },
     });
 
     const controller = auth.createAuthController({
@@ -295,19 +364,24 @@ describe('F-4 Auth core (@carecircle/core)', () => {
     expect(await controller.signInWithEmail(sensitiveEmail)).toBe(true);
     expect(await controller.signInWithOAuth('apple')).toBe(true);
     expect(await controller.signInWithOAuth('google')).toBe(true);
-    await controller.receiveSession({
-      access_token: sensitiveAccessToken,
-      refresh_token: sensitiveRefreshToken,
-      user: { id: sensitiveUserId, email: sensitiveEmail },
-    });
+    expect(await controller.handleAuthCallback('carecircle://auth/callback?code=ok-code')).toBe(
+      true,
+    );
+    expect(controller.getState().session?.access_token).toBe(sensitiveAccessToken);
 
-    // 2. Failed sign-in flows.
+    // 2. Failed sign-in flows: error results, then thrown errors (offline).
     shouldFail = true;
     expect(await controller.signInWithEmail(sensitiveEmail)).toBe(false);
     expect(await controller.signInWithOAuth('apple')).toBe(false);
+    expect(await controller.handleAuthCallback('carecircle://auth/callback?code=bad')).toBe(false);
+    shouldThrow = true;
+    expect(await controller.signInWithEmail(sensitiveEmail)).toBe(false);
+    expect(await controller.signInWithOAuth('google')).toBe(false);
+    expect(await controller.handleAuthCallback('carecircle://auth/callback?code=x')).toBe(false);
 
-    // 3. Sign-out flow.
+    // 3. Sign-out flow, including when the server cannot be reached.
     await controller.signOut();
+    expect(controller.getState().status).toBe('unauthenticated');
 
     expect(capturedCalls.length).toBeGreaterThanOrEqual(5);
     const combinedLogs = capturedCalls.join('\n');
@@ -317,13 +391,140 @@ describe('F-4 Auth core (@carecircle/core)', () => {
     expect(combinedLogs).not.toContain(sensitiveUserId);
   });
 
+  it('clears local storage on sign-out even when the server sign-out fails or is offline', async () => {
+    const auth = requireAuthModule();
+    const failures: SupabaseAuthAdapter['signOut'][] = [
+      async () => ({ error: { message: 'session_not_found', code: 'session_not_found' } }),
+      async () => {
+        throw new Error('Network request failed');
+      },
+    ];
+    for (const signOut of failures) {
+      const { backingMap, adapter } = createInMemorySecureStore();
+      const controller = auth.createAuthController({
+        secureStore: adapter,
+        supabaseAuth: createMockSupabaseAuth({ signOut }),
+      });
+      await controller.receiveSession(buildRealisticLargeSession());
+      await controller.signOut();
+      expect(controller.getState().status).toBe('unauthenticated');
+      expect(controller.getState().session).toBeNull();
+      expect(backingMap.size).toBe(0);
+    }
+  });
+
+  it('starts signed out instead of crashing when SecureStore cannot be read', async () => {
+    const auth = requireAuthModule();
+    const { adapter } = createInMemorySecureStore();
+    const lockedKeychain: SecureStoreAdapter = {
+      ...adapter,
+      getItemAsync: async () => {
+        throw new Error('User interaction is not allowed.');
+      },
+    };
+    const controller = auth.createAuthController({
+      secureStore: lockedKeychain,
+      supabaseAuth: createMockSupabaseAuth(),
+    });
+    const state = await controller.initialize();
+    expect(state.status).toBe('unauthenticated');
+    expect(state.session).toBeNull();
+  });
+
+  it('keeps the Supabase session only in SecureStore and uses the PKCE flow', async () => {
+    const auth = requireAuthModule();
+    const { backingMap, adapter } = createInMemorySecureStore();
+    const options = auth.buildSupabaseAuthOptions(adapter);
+    expect(options).toMatchObject({
+      storageKey: auth.SESSION_STORAGE_KEY,
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: false,
+      flowType: 'pkce',
+    });
+    // What the Supabase client writes (including token refreshes) must land in SecureStore.
+    const value = JSON.stringify(buildRealisticLargeSession());
+    await options.storage.setItem(auth.SESSION_STORAGE_KEY, value);
+    expect(backingMap.size).toBeGreaterThanOrEqual(2);
+    expect(await options.storage.getItem(auth.SESSION_STORAGE_KEY)).toBe(value);
+    await options.storage.removeItem(auth.SESSION_STORAGE_KEY);
+    expect(backingMap.size).toBe(0);
+  });
+
+  it('sends the app redirect URL and accepts only a PKCE code in the sign-in callback', async () => {
+    const auth = requireAuthModule();
+    const { backingMap, adapter } = createInMemorySecureStore();
+    const session = buildRealisticLargeSession();
+    const otp = jest.fn<ReturnType<SupabaseAuthAdapter['signInWithOtp']>, [never]>(async () => ({
+      error: null,
+    }));
+    const oauth = jest.fn<ReturnType<SupabaseAuthAdapter['signInWithOAuth']>, [never]>(
+      async () => ({ data: { url: 'https://supabase.local/oauth' }, error: null }),
+    );
+    const exchange = jest.fn<ReturnType<SupabaseAuthAdapter['exchangeCodeForSession']>, [string]>(
+      async () => ({ data: { session }, error: null }),
+    );
+    const controller = auth.createAuthController({
+      secureStore: adapter,
+      supabaseAuth: createMockSupabaseAuth({
+        signInWithOtp: otp,
+        signInWithOAuth: oauth,
+        exchangeCodeForSession: exchange,
+      }),
+      redirectUrl: 'carecircle://auth/callback',
+    });
+
+    await controller.signInWithEmail('caregiver@example.com');
+    expect(otp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'caregiver@example.com',
+        options: expect.objectContaining({ emailRedirectTo: 'carecircle://auth/callback' }),
+      }),
+    );
+    await controller.signInWithOAuth('apple');
+    expect(oauth).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'apple',
+        options: expect.objectContaining({ redirectTo: 'carecircle://auth/callback' }),
+      }),
+    );
+
+    // Tokens placed directly in a link (implicit flow) could sign the user into someone
+    // else's account (session fixation). They must be ignored.
+    for (const forged of [
+      'carecircle://auth/callback#access_token=attacker&refresh_token=attacker',
+      'carecircle://auth/callback?access_token=attacker&refresh_token=attacker',
+      'carecircle://auth/callback?error=access_denied',
+    ]) {
+      expect(await controller.handleAuthCallback(forged)).toBe(false);
+      expect(controller.getState().status).not.toBe('authenticated');
+      expect(backingMap.size).toBe(0);
+    }
+    expect(exchange).not.toHaveBeenCalled();
+
+    expect(await controller.handleAuthCallback('carecircle://auth/callback?code=pkce-code')).toBe(
+      true,
+    );
+    expect(exchange).toHaveBeenCalledWith('pkce-code');
+    expect(controller.getState().status).toBe('authenticated');
+    expect(controller.getState().session?.access_token).toBe(session.access_token);
+    expect(backingMap.size).toBeGreaterThanOrEqual(2);
+  });
+
   it('computes route redirects for signed-out, loading, and signed-in states', () => {
     const { resolveAuthRedirect } = requireAuthModule();
 
     expect(resolveAuthRedirect('unauthenticated', '/')).toBe('/(auth)/sign-in');
     expect(resolveAuthRedirect('unauthenticated', '/gallery')).toBe('/(auth)/sign-in');
     expect(resolveAuthRedirect('unauthenticated', '/meds/scan?id=42')).toBe('/(auth)/sign-in');
+    for (const protectedPath of ['/(tabs)/today', '/today', '/visit/new', '/circle', '/log']) {
+      expect(resolveAuthRedirect('unauthenticated', protectedPath)).toBe('/(auth)/sign-in');
+    }
     expect(resolveAuthRedirect('unauthenticated', '/(auth)/sign-in')).toBeNull();
+    // Expo Router's usePathname() drops route groups, so the sign-in route reports '/sign-in'.
+    // Redirecting it would loop forever.
+    expect(resolveAuthRedirect('unauthenticated', '/sign-in')).toBeNull();
+    expect(resolveAuthRedirect('authenticated', '/sign-in')).toBe('/');
 
     expect(resolveAuthRedirect('authenticated', '/')).toBeNull();
     expect(resolveAuthRedirect('authenticated', '/gallery')).toBeNull();
