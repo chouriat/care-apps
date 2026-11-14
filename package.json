@@ -7,6 +7,9 @@
     "typecheck": "turbo run typecheck",
     "lint": "eslint .",
     "test": "turbo run test",
+    "db:start": "node supabase/carecircle/cli.mjs start",
+    "db:stop": "node supabase/carecircle/cli.mjs stop",
+    "test:db": "node supabase/carecircle/cli.mjs test db",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

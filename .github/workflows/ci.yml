@@ -31,3 +31,24 @@ jobs:
       - run: pnpm test
       - name: Bundle the app for iOS and Android
         run: pnpm --filter carecircle export:check
+
+  db:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: supabase/setup-cli@v3
+        with:
+          version: 3.0.0
+      - name: Stage CareCircle Supabase workdir and run supabase start
+        run: |
+          WORKDIR="$(node supabase/carecircle/cli.mjs stage)"
+          supabase start --workdir "$WORKDIR" --exclude studio,imgproxy,logflare,vector,edge-runtime,mailpit
+      - name: Run pgTAP database tests
+        run: pnpm test:db
