@@ -22,5 +22,25 @@
     "typographyHeading": "Type scale",
     "radiiHeading": "Radii",
     "sampleCopy": "Daily care plan at a glance"
+  },
+  "gallery": {
+    "title": "Component Gallery",
+    "compact": "Compact Header",
+    "action": "Switch Theme",
+    "btnPrimary": "Primary Action",
+    "btnDisabled": "Disabled Action",
+    "cardCopy": "Card surface preview",
+    "staticScreen": "Nested static screen",
+    "rowInteractive": "Morning Medication",
+    "rowStatic": "Care Recipient: Nadia",
+    "chipWarning": "Review",
+    "sheetTitle": "Dose Sheet",
+    "sheetClose": "Close Sheet",
+    "emptyTitle": "No tasks scheduled",
+    "errorTitle": "Sync failed",
+    "draftName": "Medication Name",
+    "draftSchedule": "Schedule",
+    "draftLow": "Low confidence",
+    "draftSave": "Save Draft"
   }
 }
