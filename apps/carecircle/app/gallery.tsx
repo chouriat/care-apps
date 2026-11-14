@@ -6,13 +6,13 @@ import en from '../i18n/en.json';
 const g = en.gallery;
 const tp = en.tokensPreview;
 const INITIAL_DRAFT: ReadonlyArray<UI.DraftField> = [
-  { label: g.draftName, value: 'Metformin', confidence: 0.96 },
-  { label: g.draftSchedule, value: '08:00, 20:00', confidence: 0.71 },
+  { label: g.draftName, value: g.draftNameValue, confidence: 0.96 },
+  { label: g.draftSchedule, value: g.draftScheduleValue, confidence: 0.71 },
 ];
 
 export default function GalleryScreen() {
   const { scheme, setMode, colors: c, typography: t } = UI.useTheme();
-  const [sheetOpen, setSheetOpen] = useState(true);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [selectedChip, setSelectedChip] = useState(true);
   const active = scheme === 'dark' ? tp.schemeDark : tp.schemeLight;
   const noop = () => undefined;
@@ -28,7 +28,7 @@ export default function GalleryScreen() {
   const flipChip = () => setSelectedChip((prev) => !prev);
   const sheetProps = { title: g.sheetTitle, closeLabel: g.sheetClose, onClose: closeSheet };
   const emptyAct = { label: g.btnPrimary, onPress: noop };
-  const errRetry = { retryLabel: tp.modeLight, onRetry: noop };
+  const errRetry = { retryLabel: g.retry, onRetry: noop };
   const draftLabels = { saveLabel: g.draftSave, lowConfidenceLabel: g.draftLow };
   const staticProps = { accessibilityLabel: g.staticScreen, scrollable: false };
 
@@ -46,7 +46,7 @@ export default function GalleryScreen() {
       <UI.ListRow {...rowProps} onPress={() => setSheetOpen(true)} />
       <UI.ListRow title={g.rowStatic} />
       <UI.Chip label={tp.modeSystem} selected={false} onPress={() => setSelectedChip(false)} />
-      <UI.Chip label={g.rowInteractive} tone="primary" selected={selectedChip} onPress={flipChip} />
+      <UI.Chip label={g.chipToggle} selected={selectedChip} onPress={flipChip} />
       <UI.Chip label={g.chipWarning} tone="warning" />
       <UI.Chip label={g.errorTitle} tone="danger" />
       <UI.Sheet visible={sheetOpen} {...sheetProps} children={subNode} />

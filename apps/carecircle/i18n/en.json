@@ -41,6 +41,10 @@
     "draftName": "Medication Name",
     "draftSchedule": "Schedule",
     "draftLow": "Low confidence",
-    "draftSave": "Save Draft"
+    "draftSave": "Save Draft",
+    "draftNameValue": "Metformin",
+    "draftScheduleValue": "08:00, 20:00",
+    "retry": "Try again",
+    "chipToggle": "Evening Medication"
   }
 }

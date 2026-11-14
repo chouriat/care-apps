@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { radii, spacing } from '../tokens';
 import { useTheme } from './theme';
 
@@ -98,7 +98,7 @@ export function Chip(
   const { colors: c, typography: t } = useTheme();
   const pairs = { default: [c.surfaceMuted, c.textPrimary], primary: [c.primary, c.onPrimary] };
   const warn = { warning: [c.warningSurface, c.onWarningSurface], danger: [c.danger, c.onDanger] };
-  const [bg, fg] = { ...pairs, ...warn }[p.tone ?? (p.selected ? 'primary' : 'default')];
+  const [bg, fg] = { ...pairs, ...warn }[p.selected ? 'primary' : (p.tone ?? 'default')];
   const a11y = p.accessibilityLabel ?? p.label;
   const state = { selected: !!p.selected };
   const press = p.onPress
@@ -119,16 +119,19 @@ export function Sheet(
     Record<'onClose', () => void> & { children: ReactNode },
 ) {
   const { colors: c, typography: t } = useTheme();
-  if (!p.visible) return null;
   const s = [styles.card, { backgroundColor: c.surface, borderColor: c.textMuted }];
   return (
-    <View accessibilityLabel={p.title} style={s}>
-      <View style={styles.rowBetween}>
-        <Text style={[t.subtitle, { color: c.textPrimary }]} children={p.title} />
-        <Button label={p.closeLabel} variant="secondary" onPress={p.onClose} />
+    <Modal visible={p.visible} transparent animationType="slide" onRequestClose={p.onClose}>
+      <View style={styles.sheetEnd}>
+        <View accessibilityLabel={p.title} accessibilityViewIsModal style={s}>
+          <View style={styles.rowBetween}>
+            <Text style={[t.subtitle, { color: c.textPrimary }]} children={p.title} />
+            <Button label={p.closeLabel} variant="secondary" onPress={p.onClose} />
+          </View>
+          {p.children}
+        </View>
       </View>
-      {p.children}
-    </View>
+    </Modal>
   );
 }
 
@@ -174,7 +177,13 @@ export function ConfirmDraft(
         const borderColor = low ? c.onWarningSurface : c.textMuted;
         const palette = { backgroundColor: bg, borderColor };
         const inp = [styles.input, styles.boxBorder, t.body, { color: fg, ...palette }];
-        const inputProps = { value: f.value, accessibilityLabel: f.label, style: inp };
+        const hint = low ? p.lowConfidenceLabel : undefined;
+        const inputProps = {
+          value: f.value,
+          accessibilityLabel: f.label,
+          accessibilityHint: hint,
+          style: inp,
+        };
         const cap = [t.caption, { color: fg }];
         return (
           <View key={f.label} style={[styles.card, palette]}>
@@ -195,11 +204,12 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   pad: { padding: spacing.md, gap: spacing.sm },
   flex: { flex: 1 },
+  sheetEnd: { flex: 1, justifyContent: 'flex-end' },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   touchAlign: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
   touchBox: { paddingHorizontal: spacing.md, borderRadius: radii.md, borderWidth: 1 },
   card: { padding: spacing.md, borderRadius: radii.lg, borderWidth: 1, gap: spacing.xs },
-  listRowPad: { minHeight: 44, paddingHorizontal: spacing.md, paddingVertical: 8 },
+  listRowPad: { minHeight: 44, minWidth: 44, paddingHorizontal: spacing.md, paddingVertical: 8 },
   boxBorder: { borderRadius: radii.md, borderWidth: 1 },
   chip: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: radii.pill, borderWidth: 1 },
   input: { minHeight: 44, paddingHorizontal: spacing.sm },

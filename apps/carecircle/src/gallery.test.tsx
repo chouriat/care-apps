@@ -26,12 +26,18 @@ describe('Shared UI gallery and components (F-3b)', () => {
     expect(flatBg(g.cardCopy)).toBe(UI.colors.light.surface);
     expect(screen.getAllByLabelText(g.rowStatic).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByLabelText(g.chipWarning)).toBeTruthy();
+    expect(screen.queryByLabelText(g.sheetTitle)).toBeNull();
+    await fireEvent.press(screen.getByLabelText(g.rowInteractive));
     expect(screen.getByLabelText(g.sheetTitle)).toBeTruthy();
     expect(screen.getByLabelText(g.emptyTitle)).toBeTruthy();
     expect(screen.getAllByLabelText(g.errorTitle).length).toBeGreaterThanOrEqual(1);
 
     await fireEvent.press(screen.getByLabelText(g.sheetClose));
     expect(screen.queryByLabelText(g.sheetTitle)).toBeNull();
+
+    expect(flatBg(g.chipToggle)).toBe(UI.colors.light.primary);
+    await fireEvent.press(screen.getByLabelText(g.chipToggle));
+    expect(flatBg(g.chipToggle)).toBe(UI.colors.light.surfaceMuted);
 
     await fireEvent.press(screen.getByLabelText(g.action));
     expect(screen.getByText(en.tokensPreview.schemeDark)).toBeTruthy();
@@ -50,6 +56,11 @@ describe('Shared UI gallery and components (F-3b)', () => {
       const flat = StyleSheet.flatten(control.props.style);
       expect(flat.minHeight).toBeGreaterThanOrEqual(UI.MIN_TOUCH_TARGET_PT);
     }
+    for (const b of buttons) {
+      expect(StyleSheet.flatten(b.props.style).minWidth).toBeGreaterThanOrEqual(44);
+    }
+    expect(flatBg(g.cardCopy)).toBe(UI.colors.dark.surface);
+    expect(flatBg(g.draftSchedule)).toBe(UI.colors.dark.warningSurface);
 
     const inputStyle = StyleSheet.flatten(nameInput.props.style);
     const borderRatio = UI.contrastRatio(String(inputStyle.borderColor), UI.colors.dark.surface);
