@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(22);
+select plan(23);
 
 -- Allow non-superuser test roles (anon, authenticated) to record pgTAP results in pg_temp
 do $$
@@ -58,7 +58,24 @@ select is(
   'row-level security is enabled on public.users_profile'
 );
 
--- 11-12: Sign-up trigger creates users_profile rows automatically when auth.users rows are inserted
+-- 11: The sign-up trigger function must run as its owner. Supabase Auth inserts into auth.users
+-- as supabase_auth_admin, which has no rights on public.users_profile, so a trigger function
+-- that is not security definer passes the insert below (run as postgres) but breaks every real
+-- sign-up. A security definer function must also pin its search_path.
+select ok(
+  exists (
+    select 1
+      from pg_trigger t
+      join pg_proc p on p.oid = t.tgfoid
+     where t.tgrelid = 'auth.users'::regclass
+       and not t.tgisinternal
+       and p.prosecdef
+       and exists (select 1 from unnest(p.proconfig) as c where c like 'search_path=%')
+  ),
+  'sign-up trigger function on auth.users is security definer with a fixed search_path'
+);
+
+-- 12-13: Sign-up trigger creates users_profile rows automatically when auth.users rows are inserted
 set local role postgres;
 
 insert into auth.users (
@@ -123,18 +140,35 @@ update public.users_profile
        timezone = 'America/New_York'
  where user_id = '22222222-2222-4222-8222-222222222222'::uuid;
 
--- 13: Unauthenticated (anon) cannot read any rows
+-- 14: Unauthenticated (anon) cannot read any rows. Either RLS returns 0 rows or the table is not
+-- granted to anon at all (permission denied); both are acceptable, so the read runs through a
+-- helper that counts a permission error as 0 visible rows instead of aborting the suite.
+create function pg_temp.visible_users_profile_rows() returns integer
+language plpgsql
+as $$
+declare
+  n integer;
+begin
+  execute 'select count(*)::int from public.users_profile' into n;
+  return n;
+exception
+  when insufficient_privilege then
+    return 0;
+end;
+$$;
+
 set local role anon;
 select set_config('request.jwt.claim.role', 'anon', true);
 select set_config('request.jwt.claim.sub', '', true);
 select set_config('request.jwt.claims', '{"role":"anon"}', true);
 
-select is_empty(
-  $$select user_id from public.users_profile$$,
+select is(
+  pg_temp.visible_users_profile_rows(),
+  0,
   'anon role reads 0 rows from users_profile'
 );
 
--- 14-16: User A can read own row and cannot read user B row
+-- 15-17: User A can read own row and cannot read user B row
 set local role authenticated;
 select set_config('request.jwt.claim.role', 'authenticated', true);
 select set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
@@ -161,7 +195,7 @@ select results_eq(
   'unfiltered select as user A returns only user A row'
 );
 
--- 17: User B sees only user B row
+-- 18: User B sees only user B row
 select set_config('request.jwt.claim.sub', '22222222-2222-4222-8222-222222222222', true);
 select set_config(
   'request.jwt.claims',
@@ -175,7 +209,7 @@ select results_eq(
   'unfiltered select as user B returns only user B row'
 );
 
--- 18-22: Switch back to user A and verify write isolation (own update allowed; cross-user update/insert/delete refused)
+-- 19-23: Switch back to user A and verify write isolation (own update allowed; cross-user update/insert/delete refused)
 select set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
 select set_config(
   'request.jwt.claims',
