@@ -1,0 +1,16 @@
+appId: com.carecircle.app
+---
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: 'sign-in-screen'
+- tapOn:
+    id: 'sign-in-email-input'
+- inputText: 'caregiver@example.com'
+- hideKeyboard
+- tapOn: 'Send magic link'
+- assertVisible:
+    id: 'sign-in-magic-link-sent'
+- openLink: 'carecircle://auth/callback?type=magiclink&access_token=e2e-access-token&refresh_token=e2e-refresh-token'
+- assertVisible: 'CareCircle'
+- assertVisible: 'Shared family care plan shell ready.'
