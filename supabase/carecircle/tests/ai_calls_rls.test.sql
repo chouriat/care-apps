@@ -1,12 +1,14 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(6);
+select plan(8);
 select has_table('public', 'ai_calls', 'public.ai_calls table exists');
-select columns_are('public', 'ai_calls', array['id', 'request_id', 'user_id', 'task', 'model', 'prompt_version', 'latency_ms', 'input_tokens', 'output_tokens', 'estimated_cost_cents', 'validation_ok', 'error_code', 'created_at'], 'ai_calls stores metadata columns only');
+select columns_are('public', 'ai_calls', array['id', 'request_id', 'user_id', 'task', 'model', 'prompt_version', 'latency_ms', 'input_tokens', 'output_tokens', 'estimated_cost_microcents', 'validation_ok', 'error_code', 'created_at', 'cost_currency'], 'ai_calls stores metadata columns only');
 select is(coalesce((select relrowsecurity from pg_class where oid = to_regclass('public.ai_calls')), false), true, 'RLS enabled on ai_calls');
 select is(has_table_privilege('anon', 'public.ai_calls', 'SELECT'), false, 'anon cannot read ai_calls');
 select is(has_table_privilege('authenticated', 'public.ai_calls', 'SELECT, INSERT, UPDATE, DELETE'), false, 'authenticated cannot access ai_calls directly');
 select is(has_table_privilege('service_role', 'public.ai_calls', 'INSERT'), true, 'service_role can insert into ai_calls');
+select col_type_is('public', 'ai_calls', 'estimated_cost_microcents', 'bigint', 'cost is integer microcents, not whole cents');
+select col_default_is('public', 'ai_calls', 'cost_currency', 'USD', 'cost currency defaults to USD');
 select * from finish();
 rollback;

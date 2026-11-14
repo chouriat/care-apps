@@ -81,7 +81,7 @@ evals/carecircle/labels/   20 prescription label images + expected.json
 
 1. Contracts first. A feature task MUST NOT start until the contract files it uses are merged.
 2. Database tables and columns are `snake_case`. TypeScript types are `PascalCase`. JSON sent over the network is `camelCase`. Convert only in `packages/core/case.ts`.
-3. IDs are UUID v4 strings. Timestamps are ISO 8601 UTC strings over the network and `timestamptz` in Postgres. Money is integer minor units (cents) plus an ISO 4217 currency code. Never floats for money.
+3. IDs are UUID v4 strings. Timestamps are ISO 8601 UTC strings over the network and `timestamptz` in Postgres. Money is integer minor units (cents) plus an ISO 4217 currency code. Never floats for money. Exception: estimated AI call costs (`ai_calls`) are integer microcents (1 cent = 1,000,000 microcents) plus a currency code, because one call usually costs a fraction of a cent.
 4. Every enum value in the spec is the complete list. Adding a value is a spec change.
 5. The app never calls an AI model directly. Every AI call goes through `POST /functions/v1/ai` and the response is validated with its Zod schema. Invalid output is retried once, then returned as `SCHEMA_INVALID`.
 6. AI output is always a draft. The user confirms before anything is saved. Use the `ConfirmDraft` component.
