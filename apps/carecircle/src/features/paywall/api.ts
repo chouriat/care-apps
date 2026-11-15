@@ -27,6 +27,27 @@ export function resolveRevenueCatApiKey(platformOs: string = Platform.OS): strin
   return null;
 }
 
+// Sign-out waits for RevenueCat's logOut (a network call) at most this long, then goes ahead.
+export const REVENUECAT_SIGN_OUT_TIMEOUT_MS = 5000;
+
+function settleWithin(promise: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    promise.then(
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      () => {
+        // Purchases.logOut() throws if the current RevenueCat user is already anonymous, and
+        // fails offline. Either way sign-out goes ahead.
+        clearTimeout(timer);
+        resolve();
+      },
+    );
+  });
+}
+
 let sdkConfigured = false;
 let sdkCurrentUserId: string | null = null;
 
@@ -62,11 +83,13 @@ export async function syncRevenueCatAuthUser(userId: string | null): Promise<voi
       return;
     }
     sdkCurrentUserId = null;
+    let logOutCall: Promise<unknown>;
     try {
-      await Purchases.logOut();
-    } catch {
-      // Purchases.logOut() throws if the current RevenueCat user is already anonymous; ignore.
+      logOutCall = Promise.resolve(Purchases.logOut());
+    } catch (err) {
+      logOutCall = Promise.reject(err);
     }
+    await settleWithin(logOutCall, REVENUECAT_SIGN_OUT_TIMEOUT_MS);
     return;
   }
 

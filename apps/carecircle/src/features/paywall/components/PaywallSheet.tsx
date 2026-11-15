@@ -157,17 +157,21 @@ export function PaywallSheet({
           </View>
         ) : (
           <View style={{ gap: spacing.sm }}>
-            <Text
-              testID="paywall-price"
-              style={{
-                color: colors.textPrimary,
-                fontSize: typography.subtitle.fontSize,
-                lineHeight: typography.subtitle.lineHeight,
-                fontWeight: typography.subtitle.fontWeight,
-              }}
-            >
-              {priceText ?? en.paywall.defaultPrice}
-            </Text>
+            {/* The price comes only from the store (RevenueCat package `priceString` plus the period).
+                Never show a made-up fallback price: it may differ from what the store charges. */}
+            {priceText ? (
+              <Text
+                testID="paywall-price"
+                style={{
+                  color: colors.textPrimary,
+                  fontSize: typography.subtitle.fontSize,
+                  lineHeight: typography.subtitle.lineHeight,
+                  fontWeight: typography.subtitle.fontWeight,
+                }}
+              >
+                {priceText}
+              </Text>
+            ) : null}
 
             <Button
               label={en.paywall.subscribeCta}

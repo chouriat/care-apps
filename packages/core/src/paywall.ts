@@ -201,14 +201,21 @@ export function createPaywallController(deps: PaywallControllerDeps): PaywallCon
           errorCode: null,
         };
 
-        if (isActive && purchased.isTrial === true) {
-          const props = validateAnalyticsEvent('cc_trial_started', {
-            entitlement: CARECIRCLE_FAMILY_ENTITLEMENT,
-          });
-          await deps.analytics?.track('cc_trial_started', props);
+        notify();
+
+        // The purchase is done at this point. A failing analytics call must never turn a paid
+        // purchase into "purchase failed" on screen, so it gets its own try/catch.
+        if (isActive && purchased.isTrial === true && deps.analytics) {
+          try {
+            const props = validateAnalyticsEvent('cc_trial_started', {
+              entitlement: CARECIRCLE_FAMILY_ENTITLEMENT,
+            });
+            await deps.analytics.track('cc_trial_started', props);
+          } catch {
+            deps.logger?.warn('paywall_trial_event_failed', { code: 'ANALYTICS_FAILED' });
+          }
         }
 
-        notify();
         return isActive;
       } catch (err) {
         if (isUserCancelledError(err)) {

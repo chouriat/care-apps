@@ -79,9 +79,8 @@
   "paywall": {
     "title": "CareCircle Family Plan",
     "subtitle": "Invite up to 8 family members, unlock AI visit-note summaries, and export care log PDFs.",
-    "defaultPrice": "$4.99 / month",
-    "subscribeCta": "Start Family plan trial",
-    "subscribeA11y": "Start CareCircle Family plan trial",
+    "subscribeCta": "Subscribe to the Family plan",
+    "subscribeA11y": "Subscribe to the CareCircle Family plan",
     "restoreCta": "Restore purchases",
     "restoreA11y": "Restore previous purchases",
     "termsLabel": "Terms of Use",

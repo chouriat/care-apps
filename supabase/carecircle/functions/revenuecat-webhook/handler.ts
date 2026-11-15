@@ -40,6 +40,11 @@ function timingSafeEqualString(a: string, b: string): boolean {
   return diff === 0;
 }
 
+// RevenueCat event ids are UUIDs and types are upper-case words; anything else is not logged.
+function safeLogToken(value: unknown): string | null {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null;
+}
+
 function parseIsoTimestamp(raw: unknown, fieldName: string): string | null {
   if (raw === null || raw === undefined) {
     return null;
@@ -88,7 +93,15 @@ export function entitlementFromSubscriber(
 
   const productId =
     typeof rawEnt.product_identifier === 'string' ? rawEnt.product_identifier : null;
-  const rawSub = productId ? subscriber.subscriptions[productId] : undefined;
+  // Subscriptions live in `subscriptions`; one-time (lifetime) purchases live in
+  // `non_subscriptions[product]`, a list of purchases, of which the last one counts.
+  let rawSub: unknown = productId ? subscriber.subscriptions[productId] : undefined;
+  if (!isPlainObject(rawSub) && productId && isPlainObject(subscriber.non_subscriptions)) {
+    const purchases = subscriber.non_subscriptions[productId];
+    if (Array.isArray(purchases) && purchases.length > 0) {
+      rawSub = purchases[purchases.length - 1];
+    }
+  }
 
   if (!isPlainObject(rawSub)) {
     return { active: false, expires_at: entExpiresIso };
@@ -325,6 +338,7 @@ export function createRevenueCatWebhookHandler(
       },
     };
 
+    const event = isPlainObject(payload) && isPlainObject(payload.event) ? payload.event : {};
     const result = await processRevenueCatWebhook({
       authHeader,
       expectedWebhookSecret: webhookSecret,
@@ -334,6 +348,17 @@ export function createRevenueCatWebhookHandler(
       allowSandbox,
       now: nowFn(),
     });
+
+    // Only the event id, its type and an error code. Never the body, a header, a key or a user id.
+    console.log(
+      JSON.stringify({
+        fn: 'revenuecat-webhook',
+        event_id: safeLogToken(event.id),
+        event_type: safeLogToken(event.type),
+        status: result.status,
+        error_code: result.errorCode ?? null,
+      }),
+    );
 
     return Response.json(
       result.errorCode ? { ok: result.ok, errorCode: result.errorCode } : { ok: result.ok },
