@@ -1,3 +1,10 @@
+// F-5 [safety], app side. The webhook and the server check live in Edge Functions (Deno) and are tested
+// in supabase/carecircle/functions/revenuecat-webhook/index_test.ts and
+// supabase/carecircle/functions/_shared/entitlements_test.ts. This file covers only what the phone does.
+//
+// The phone never writes `entitlements` (RLS forbids it, see entitlements_rls.test.sql), so the
+// controller gets a read-only store. What the phone shows is a convenience; the server decides access.
+
 type CareCircleEntitlementId = 'carecircle_family';
 
 interface EntitlementRow {
@@ -7,15 +14,17 @@ interface EntitlementRow {
   expires_at: string | null;
 }
 
-interface EntitlementStoreAdapter {
-  upsertEntitlement(row: EntitlementRow): Promise<{ error: { message: string } | null }>;
+interface EntitlementReadStore {
   getEntitlement(
     userId: string,
     entitlement: CareCircleEntitlementId,
   ): Promise<{ data: EntitlementRow | null; error: { message: string } | null }>;
 }
 
+// Thin wrapper over react-native-purchases. purchaseFamilyPackage and restorePurchases throw on
+// failure; a purchase the user cancels throws an error with `userCancelled: true`, as the SDK does.
 interface RevenueCatSdkAdapter {
+  logIn(appUserId: string): Promise<void>;
   purchaseFamilyPackage(): Promise<{
     entitlementActive: boolean;
     expiresAt: string | null;
@@ -45,28 +54,9 @@ interface PaywallController {
 
 interface PaywallModuleContract {
   CARECIRCLE_FAMILY_ENTITLEMENT: CareCircleEntitlementId;
-  processRevenueCatWebhook(input: {
-    authHeader: string | null;
-    expectedWebhookSecret: string;
-    payload: unknown;
-    store: EntitlementStoreAdapter;
-    now?: Date;
-  }): Promise<{
-    status: number;
-    ok: boolean;
-    errorCode?: string;
-    row?: EntitlementRow;
-  }>;
-  verifyServerEntitlement(input: {
-    authenticatedUserId: string;
-    entitlement?: CareCircleEntitlementId;
-    clientClaim?: Record<string, unknown>;
-    store: Pick<EntitlementStoreAdapter, 'getEntitlement'>;
-    now?: Date;
-  }): Promise<{ allowed: boolean; reason?: 'ENTITLEMENT_REQUIRED' | 'STORE_ERROR' }>;
   createPaywallController(deps: {
     userId: string;
-    store: Pick<EntitlementStoreAdapter, 'getEntitlement' | 'upsertEntitlement'>;
+    store: EntitlementReadStore;
     sdk: RevenueCatSdkAdapter;
     analytics?: { track(event: string, props?: Record<string, unknown>): void | Promise<void> };
     logger?: { warn(msg: string, meta?: Record<string, unknown>): void };
@@ -77,246 +67,270 @@ interface PaywallModuleContract {
 function requirePaywallModule(): PaywallModuleContract {
   // Loaded at runtime so this tests-only PR typechecks before packages/core/paywall.ts exists.
   const mod = jest.requireActual<Partial<PaywallModuleContract>>('../paywall');
-  if (
-    !mod.processRevenueCatWebhook ||
-    !mod.verifyServerEntitlement ||
-    !mod.createPaywallController
-  ) {
+  if (!mod.createPaywallController || !mod.CARECIRCLE_FAMILY_ENTITLEMENT) {
     throw new Error('F-5 packages/core/paywall is not implemented yet.');
   }
   return mod as PaywallModuleContract;
 }
 
 const USER_A = '11111111-1111-4111-8111-111111111111';
-const WEBHOOK_SECRET = 'rc-webhook-secret-token-2026';
+const NOW = new Date('2026-11-15T10:00:00.000Z');
+const FUTURE = '2026-12-15T10:00:00.000Z';
 
-function createInMemoryEntitlementStore(initialRows: EntitlementRow[] = []) {
-  const rows = new Map<string, EntitlementRow>();
-  for (const r of initialRows) {
-    rows.set(`${r.user_id}:${r.entitlement}`, r);
-  }
-  const store: EntitlementStoreAdapter = {
-    async upsertEntitlement(row) {
-      rows.set(`${row.user_id}:${row.entitlement}`, row);
-      return { error: null };
-    },
+function readStore(initial: EntitlementRow | null = null) {
+  let row = initial;
+  let fail: 'error' | 'throw' | null = null;
+  const lookups: string[] = [];
+  const store: EntitlementReadStore = {
     async getEntitlement(userId, entitlement) {
-      return { data: rows.get(`${userId}:${entitlement}`) ?? null, error: null };
+      lookups.push(`${userId}:${entitlement}`);
+      if (fail === 'throw') throw new Error('network down');
+      if (fail === 'error') return { data: null, error: { message: 'PostgREST timeout' } };
+      return { data: row && row.user_id === userId ? row : null, error: null };
     },
   };
-  return { rows, store };
+  return {
+    store,
+    lookups,
+    set(r: EntitlementRow | null) {
+      row = r;
+    },
+    fail(mode: 'error' | 'throw' | null) {
+      fail = mode;
+    },
+  };
 }
 
-describe('F-5 Paywall on RevenueCat (@carecircle/core/paywall)', () => {
-  it('sets entitlements.active = true on sandbox purchase webhook and active = false on expiration, rejecting bad auth', async () => {
-    const { processRevenueCatWebhook, CARECIRCLE_FAMILY_ENTITLEMENT } = requirePaywallModule();
-    expect(CARECIRCLE_FAMILY_ENTITLEMENT).toBe('carecircle_family');
+const activeRow = (expires_at: string | null = FUTURE): EntitlementRow => ({
+  user_id: USER_A,
+  entitlement: 'carecircle_family',
+  active: true,
+  expires_at,
+});
 
-    const { rows, store } = createInMemoryEntitlementStore();
-    const now = new Date('2026-11-15T10:00:00.000Z');
-    const futureMs = Date.parse('2026-12-15T10:00:00.000Z');
+function cancelledError() {
+  return Object.assign(new Error('Purchase was cancelled.'), { userCancelled: true });
+}
 
-    // Forged webhook calls (missing header, wrong secret, or empty server secret) are rejected with 401.
-    for (const [authHeader, expectedWebhookSecret] of [
-      [null, WEBHOOK_SECRET],
-      ['Bearer wrong-secret', WEBHOOK_SECRET],
-      ['Bearer ', ''],
-    ] as const) {
-      const unauth = await processRevenueCatWebhook({
-        authHeader,
-        expectedWebhookSecret,
-        payload: {
-          event: {
-            type: 'INITIAL_PURCHASE',
-            app_user_id: USER_A,
-            entitlement_ids: ['carecircle_family'],
-            expiration_at_ms: futureMs,
-          },
-        },
-        store,
-        now,
-      });
-      expect(unauth.status).toBe(401);
-      expect(unauth.ok).toBe(false);
+function setup(
+  opts: {
+    row?: EntitlementRow | null;
+    purchase?: () => Promise<{
+      entitlementActive: boolean;
+      expiresAt: string | null;
+      isTrial?: boolean;
+    }>;
+    restore?: () => Promise<{ entitlementActive: boolean; expiresAt: string | null }>;
+  } = {},
+) {
+  const { createPaywallController } = requirePaywallModule();
+  const db = readStore(opts.row ?? null);
+  const order: string[] = [];
+  const tracked: Array<{ event: string; props?: Record<string, unknown> }> = [];
+  const warnings: Array<{ msg: string; meta?: Record<string, unknown> }> = [];
+  const sdk: RevenueCatSdkAdapter = {
+    async logIn(appUserId) {
+      order.push(`logIn:${appUserId}`);
+    },
+    async purchaseFamilyPackage() {
+      order.push('purchase');
+      return opts.purchase
+        ? opts.purchase()
+        : { entitlementActive: true, expiresAt: FUTURE, isTrial: true };
+    },
+    async restorePurchases() {
+      order.push('restore');
+      return opts.restore ? opts.restore() : { entitlementActive: true, expiresAt: FUTURE };
+    },
+  };
+  const controller = createPaywallController({
+    userId: USER_A,
+    store: db.store,
+    sdk,
+    analytics: {
+      track(event, props) {
+        tracked.push({ event, props });
+      },
+    },
+    logger: {
+      warn(msg, meta) {
+        warnings.push({ msg, meta });
+      },
+    },
+    now: () => NOW,
+  });
+  return { controller, db, order, tracked, warnings };
+}
+
+describe('F-5 Paywall on RevenueCat, app side (@carecircle/core/paywall)', () => {
+  it('exports the spec entitlement id', () => {
+    expect(requirePaywallModule().CARECIRCLE_FAMILY_ENTITLEMENT).toBe('carecircle_family');
+  });
+
+  it('refreshEntitlement reads the server row for the signed-in user and respects expiry', async () => {
+    const { controller, db } = setup();
+
+    expect(await controller.refreshEntitlement()).toBe(false);
+    expect(controller.getState()).toEqual({
+      status: 'ready',
+      entitlement: 'carecircle_family',
+      active: false,
+      expiresAt: null,
+      errorCode: null,
+    });
+    expect(db.lookups).toEqual([`${USER_A}:carecircle_family`]);
+
+    db.set(activeRow());
+    expect(await controller.refreshEntitlement()).toBe(true);
+    expect(controller.getState()).toMatchObject({ active: true, expiresAt: FUTURE });
+
+    // active = true but the period ended: not active.
+    db.set(activeRow('2026-11-15T10:00:00.000Z'));
+    expect(await controller.refreshEntitlement()).toBe(false);
+    expect(controller.getState().active).toBe(false);
+
+    db.set({ ...activeRow(), active: false });
+    expect(await controller.refreshEntitlement()).toBe(false);
+    expect(controller.getState().active).toBe(false);
+  });
+
+  it('a failed refresh shows an error but does not take away access the user already had', async () => {
+    const { controller, db } = setup({ row: activeRow() });
+    await controller.refreshEntitlement();
+    expect(controller.getState().active).toBe(true);
+
+    for (const mode of ['error', 'throw'] as const) {
+      db.fail(mode);
+      await expect(controller.refreshEntitlement()).resolves.toBe(true);
+      expect(controller.getState()).toMatchObject({ status: 'error', active: true });
+      expect(controller.getState().errorCode).toEqual(expect.stringMatching(/\S/));
     }
-    expect(rows.size).toBe(0);
 
-    // Valid INITIAL_PURCHASE webhook writes active = true for carecircle_family.
-    const purchase = await processRevenueCatWebhook({
-      authHeader: `Bearer ${WEBHOOK_SECRET}`,
-      expectedWebhookSecret: WEBHOOK_SECRET,
-      payload: {
-        event: {
-          type: 'INITIAL_PURCHASE',
-          app_user_id: USER_A,
-          entitlement_ids: ['carecircle_family'],
-          expiration_at_ms: futureMs,
-        },
-      },
-      store,
-      now,
-    });
-    expect(purchase.status).toBe(200);
-    expect(purchase.ok).toBe(true);
-    expect(rows.get(`${USER_A}:carecircle_family`)).toEqual({
-      user_id: USER_A,
-      entitlement: 'carecircle_family',
-      active: true,
-      expires_at: '2026-12-15T10:00:00.000Z',
-    });
-
-    // EXPIRATION webhook flips active = false.
-    const expired = await processRevenueCatWebhook({
-      authHeader: `Bearer ${WEBHOOK_SECRET}`,
-      expectedWebhookSecret: WEBHOOK_SECRET,
-      payload: {
-        event: {
-          type: 'EXPIRATION',
-          app_user_id: USER_A,
-          entitlement_ids: ['carecircle_family'],
-          expiration_at_ms: Date.parse('2026-11-15T09:00:00.000Z'),
-        },
-      },
-      store,
-      now,
-    });
-    expect(expired.status).toBe(200);
-    expect(rows.get(`${USER_A}:carecircle_family`)?.active).toBe(false);
+    // Recovers on the next good read and clears the error.
+    db.fail(null);
+    await controller.refreshEntitlement();
+    expect(controller.getState()).toMatchObject({ status: 'ready', active: true, errorCode: null });
   });
 
-  it('refuses a forged client claim of entitlement when the server entitlements table is inactive, expired, or errors', async () => {
-    const { verifyServerEntitlement } = requirePaywallModule();
-    const now = new Date('2026-11-15T10:00:00.000Z');
-    const { rows, store } = createInMemoryEntitlementStore([
-      {
-        user_id: USER_A,
-        entitlement: 'carecircle_family',
-        active: false,
-        expires_at: null,
-      },
-    ]);
-
-    // Client claims active=true / entitlement='carecircle_family' in request payload,
-    // but server table has active=false -> MUST be refused.
-    const forgedAttempt = await verifyServerEntitlement({
-      authenticatedUserId: USER_A,
-      clientClaim: {
-        entitlement: 'carecircle_family',
-        active: true,
-        isPro: true,
-        user_id: USER_A,
-      },
-      store,
-      now,
-    });
-    expect(forgedAttempt).toEqual({
-      allowed: false,
-      reason: 'ENTITLEMENT_REQUIRED',
-    });
-
-    // Expired row (active=true in DB, but expires_at <= now) -> MUST be refused.
-    rows.set(`${USER_A}:carecircle_family`, {
-      user_id: USER_A,
-      entitlement: 'carecircle_family',
-      active: true,
-      expires_at: '2026-11-15T09:59:59.000Z',
-    });
-    const expiredAttempt = await verifyServerEntitlement({
-      authenticatedUserId: USER_A,
-      clientClaim: { entitlement: 'carecircle_family', active: true },
-      store,
-      now,
-    });
-    expect(expiredAttempt.allowed).toBe(false);
-
-    // Store read failure fails closed (never fails open).
-    const errorAttempt = await verifyServerEntitlement({
-      authenticatedUserId: USER_A,
-      clientClaim: { entitlement: 'carecircle_family', active: true },
-      store: {
-        async getEntitlement() {
-          return { data: null, error: { message: 'PostgREST timeout' } };
-        },
-      },
-      now,
-    });
-    expect(errorAttempt).toEqual({
-      allowed: false,
-      reason: 'STORE_ERROR',
-    });
-
-    // Valid active server row -> allowed.
-    rows.set(`${USER_A}:carecircle_family`, {
-      user_id: USER_A,
-      entitlement: 'carecircle_family',
-      active: true,
-      expires_at: '2026-12-15T10:00:00.000Z',
-    });
-    const validAttempt = await verifyServerEntitlement({
-      authenticatedUserId: USER_A,
-      store,
-      now,
-    });
-    expect(validAttempt).toEqual({ allowed: true });
-  });
-
-  it('unlocks carecircle_family on restorePurchases on a fresh install and tracks cc_trial_started on trial purchase', async () => {
-    const { createPaywallController } = requirePaywallModule();
-    const { rows, store } = createInMemoryEntitlementStore();
-    const tracked: Array<{ event: string; props?: Record<string, unknown> }> = [];
-
-    const controller = createPaywallController({
-      userId: USER_A,
-      store,
-      sdk: {
-        async purchaseFamilyPackage() {
-          rows.set(`${USER_A}:carecircle_family`, {
-            user_id: USER_A,
-            entitlement: 'carecircle_family',
-            active: true,
-            expires_at: '2026-12-15T10:00:00.000Z',
-          });
-          return {
-            entitlementActive: true,
-            expiresAt: '2026-12-15T10:00:00.000Z',
-            isTrial: true,
-          };
-        },
-        async restorePurchases() {
-          rows.set(`${USER_A}:carecircle_family`, {
-            user_id: USER_A,
-            entitlement: 'carecircle_family',
-            active: true,
-            expires_at: '2026-12-15T10:00:00.000Z',
-          });
-          return {
-            entitlementActive: true,
-            expiresAt: '2026-12-15T10:00:00.000Z',
-          };
-        },
-      },
-      analytics: {
-        track(event, props) {
-          tracked.push({ event, props });
-        },
-      },
-    });
-
-    // Fresh install starts inactive
+  it('restore on a fresh install logs in to RevenueCat as this user first, then unlocks', async () => {
+    // The webhook has not reached the server yet: the server row is still empty.
+    const { controller, order } = setup();
     await controller.refreshEntitlement();
     expect(controller.getState().active).toBe(false);
 
-    // Restore on fresh install unlocks the entitlement
-    const restored = await controller.restorePurchases();
-    expect(restored).toBe(true);
-    expect(controller.getState().active).toBe(true);
-    expect(controller.getState().entitlement).toBe('carecircle_family');
+    expect(await controller.restorePurchases()).toBe(true);
+    expect(order).toEqual([`logIn:${USER_A}`, 'restore']);
+    expect(controller.getState()).toMatchObject({
+      status: 'ready',
+      entitlement: 'carecircle_family',
+      active: true,
+      expiresAt: FUTURE,
+      errorCode: null,
+    });
+  });
 
-    // Trial purchase emits cc_trial_started without PII
-    const purchased = await controller.purchase();
-    expect(purchased).toBe(true);
+  it('restore that finds nothing is not an error and does not unlock', async () => {
+    const { controller } = setup({
+      restore: async () => ({ entitlementActive: false, expiresAt: null }),
+    });
+    expect(await controller.restorePurchases()).toBe(false);
+    expect(controller.getState()).toMatchObject({
+      status: 'ready',
+      active: false,
+      errorCode: null,
+    });
+  });
+
+  it('a failed restore shows an error and keeps current access', async () => {
+    const { controller } = setup({
+      row: activeRow(),
+      restore: async () => {
+        throw new Error('store unavailable');
+      },
+    });
+    await controller.refreshEntitlement();
+    expect(await controller.restorePurchases()).toBe(false);
+    expect(controller.getState()).toMatchObject({ status: 'error', active: true });
+    expect(controller.getState().errorCode).toEqual(expect.stringMatching(/\S/));
+  });
+
+  it('a trial purchase logs in first, unlocks and sends cc_trial_started with no personal data', async () => {
+    const { controller, order, tracked } = setup();
+    expect(await controller.purchase()).toBe(true);
+    expect(order).toEqual([`logIn:${USER_A}`, 'purchase']);
+    expect(controller.getState()).toMatchObject({ status: 'ready', active: true, errorCode: null });
     expect(tracked).toEqual([
       { event: 'cc_trial_started', props: { entitlement: 'carecircle_family' } },
     ]);
+  });
+
+  it('a paid purchase without a trial does not send cc_trial_started', async () => {
+    const { controller, tracked } = setup({
+      purchase: async () => ({ entitlementActive: true, expiresAt: FUTURE, isTrial: false }),
+    });
+    expect(await controller.purchase()).toBe(true);
+    expect(controller.getState().active).toBe(true);
+    expect(tracked.filter((t) => t.event === 'cc_trial_started')).toEqual([]);
+  });
+
+  it('a cancelled purchase is quiet: no error, no event, nothing unlocked', async () => {
+    const { controller, tracked } = setup({
+      purchase: async () => {
+        throw cancelledError();
+      },
+    });
+    await controller.refreshEntitlement();
+    expect(await controller.purchase()).toBe(false);
+    expect(controller.getState()).toMatchObject({
+      status: 'ready',
+      active: false,
+      errorCode: null,
+    });
+    expect(tracked).toEqual([]);
+  });
+
+  it('a failed purchase shows an error, sends no event and does not remove existing access', async () => {
+    const { controller, tracked } = setup({
+      row: activeRow(),
+      purchase: async () => {
+        throw new Error('STORE_PROBLEM');
+      },
+    });
+    await controller.refreshEntitlement();
+    expect(await controller.purchase()).toBe(false);
+    expect(controller.getState()).toMatchObject({ status: 'error', active: true });
+    expect(controller.getState().errorCode).toEqual(expect.stringMatching(/\S/));
+    expect(tracked).toEqual([]);
+  });
+
+  it('a purchase the store reports as not active does not unlock or send the trial event', async () => {
+    const { controller, tracked } = setup({
+      purchase: async () => ({ entitlementActive: false, expiresAt: null, isTrial: true }),
+    });
+    expect(await controller.purchase()).toBe(false);
+    expect(controller.getState().active).toBe(false);
+    expect(tracked).toEqual([]);
+  });
+
+  it('notifies subscribers and stops after unsubscribe', async () => {
+    const { controller } = setup();
+    const seen: boolean[] = [];
+    const unsubscribe = controller.subscribe((s) => seen.push(s.active));
+    await controller.restorePurchases();
+    expect(seen[seen.length - 1]).toBe(true);
+    const count = seen.length;
+    unsubscribe();
+    await controller.refreshEntitlement();
+    expect(seen.length).toBe(count);
+  });
+
+  it('never puts the user id or raw error text in logs', async () => {
+    const { controller, warnings } = setup({
+      purchase: async () => {
+        throw new Error(`receipt for ${USER_A} rejected`);
+      },
+    });
+    await controller.purchase();
+    expect(JSON.stringify(warnings)).not.toContain(USER_A);
   });
 });

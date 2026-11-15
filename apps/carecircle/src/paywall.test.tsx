@@ -13,6 +13,10 @@ interface PaywallSheetProps {
   isOffline?: boolean;
   hasError?: boolean;
   isActive?: boolean;
+  // Store price and period from RevenueCat's offering, already formatted, e.g. "$4.99 / month".
+  priceText?: string;
+  onOpenTerms?: () => void;
+  onOpenPrivacy?: () => void;
 }
 
 interface PaywallFeatureContract {
@@ -122,5 +126,73 @@ describe('F-5 PaywallSheet and useEntitlement("carecircle_family") (apps/carecir
       </UI.ThemeProvider>,
     );
     expect(screen.getByTestId('paywall-active')).toBeTruthy();
+  });
+
+  // App Store Review Guideline 3.1.2 (subscriptions): the paywall shows the price and period and
+  // links to the Terms of Use and the Privacy Policy, next to the restore button.
+  it('shows the price and links to Terms of Use and Privacy Policy', async () => {
+    const { PaywallSheet } = requirePaywallFeature();
+    const onOpenTerms = jest.fn();
+    const onOpenPrivacy = jest.fn();
+    await render(
+      <UI.ThemeProvider>
+        <PaywallSheet
+          visible
+          onClose={jest.fn()}
+          onPurchase={jest.fn()}
+          onRestorePurchases={jest.fn()}
+          priceText="$4.99 / month"
+          onOpenTerms={onOpenTerms}
+          onOpenPrivacy={onOpenPrivacy}
+        />
+      </UI.ThemeProvider>,
+    );
+    expect(screen.getByText(/\$4\.99 \/ month/)).toBeTruthy();
+    for (const link of screen.getAllByRole('link')) {
+      const flatStyle = StyleSheet.flatten(link.props.style);
+      expect(flatStyle.minHeight).toBeGreaterThanOrEqual(UI.MIN_TOUCH_TARGET_PT);
+      expect(flatStyle.minWidth).toBeGreaterThanOrEqual(UI.MIN_TOUCH_TARGET_PT);
+    }
+    await fireEvent.press(screen.getByRole('link', { name: /terms/i }));
+    expect(onOpenTerms).toHaveBeenCalledTimes(1);
+    await fireEvent.press(screen.getByRole('link', { name: /privacy/i }));
+    expect(onOpenPrivacy).toHaveBeenCalledTimes(1);
+  });
+
+  it('cannot start a second purchase or restore while one is running', async () => {
+    const { PaywallSheet } = requirePaywallFeature();
+    const onPurchase = jest.fn();
+    const onRestorePurchases = jest.fn();
+    await render(
+      <UI.ThemeProvider>
+        <PaywallSheet
+          visible
+          isLoading
+          onClose={jest.fn()}
+          onPurchase={onPurchase}
+          onRestorePurchases={onRestorePurchases}
+        />
+      </UI.ThemeProvider>,
+    );
+    for (const name of [/trial|subscribe|upgrade|family/i, /restore/i]) {
+      const button = screen.queryByRole('button', { name });
+      if (button) {
+        await fireEvent.press(button);
+      }
+    }
+    expect(onPurchase).not.toHaveBeenCalled();
+    expect(onRestorePurchases).not.toHaveBeenCalled();
+  });
+
+  it('does not offer to buy again when the Family plan is already active', async () => {
+    const { PaywallSheet } = requirePaywallFeature();
+    const onPurchase = jest.fn();
+    await render(
+      <UI.ThemeProvider>
+        <PaywallSheet visible isActive onClose={jest.fn()} onPurchase={onPurchase} />
+      </UI.ThemeProvider>,
+    );
+    expect(screen.getByTestId('paywall-active')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /trial|subscribe|upgrade/i })).toBeNull();
   });
 });

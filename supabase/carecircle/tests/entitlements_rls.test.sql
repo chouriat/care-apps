@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(17);
+select plan(24);
 
 do $$
 declare
@@ -53,6 +53,20 @@ select col_type_is(
   'expires_at',
   'timestamp with time zone',
   'expires_at is timestamptz'
+);
+
+-- A missing value must never read as "maybe paid": active is required and starts false.
+select col_not_null('public', 'entitlements', 'active', 'active is not null');
+select col_default_is('public', 'entitlements', 'active', 'false', 'active defaults to false');
+
+-- Table privileges: the app may only read; anon gets nothing; the webhook (service_role) writes.
+select table_privs_are(
+  'public', 'entitlements', 'anon', array[]::text[],
+  'anon has no privileges on entitlements'
+);
+select table_privs_are(
+  'public', 'entitlements', 'authenticated', array['SELECT'],
+  'authenticated may only SELECT entitlements'
 );
 
 -- 9: RLS enabled
@@ -182,6 +196,26 @@ select is(
   false,
   'user A entitlement remains false after rejected client write attempts'
 );
+
+-- The RevenueCat webhook writes with the service role: insert, update (upsert) and delete must work.
+set local role service_role;
+select lives_ok(
+  $$insert into public.entitlements (user_id, entitlement, active, expires_at)
+    values ('aaaaaaaa-1111-4111-8111-111111111111'::uuid, 'carecircle_family', true, now() + interval '30 days')
+    on conflict (user_id, entitlement) do update
+      set active = excluded.active, expires_at = excluded.expires_at$$,
+  'service_role can upsert an entitlement (webhook)'
+);
+select is(
+  (select active from public.entitlements where user_id = 'aaaaaaaa-1111-4111-8111-111111111111'::uuid),
+  true,
+  'service_role upsert changed the row'
+);
+select lives_ok(
+  $$delete from public.entitlements where user_id = 'aaaaaaaa-1111-4111-8111-111111111111'::uuid$$,
+  'service_role can delete an entitlement'
+);
+set local role postgres;
 
 -- 17: Cascade delete on auth.users deletion
 delete from auth.users where id = 'bbbbbbbb-2222-4222-8222-222222222222'::uuid;
