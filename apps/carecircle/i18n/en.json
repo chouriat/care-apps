@@ -75,5 +75,18 @@
     "missedDoseBody": "Open CareCircle to check the care plan.",
     "taskReminderTitle": "Care task reminder",
     "taskReminderBody": "Open CareCircle to view your care task."
+  },
+  "devChecks": {
+    "title": "Developer Checks",
+    "subtitle": "Verify notifications, Sentry crash reporting, and PostHog analytics on a device.",
+    "testReminder": "Test reminder in 1 minute",
+    "showPushToken": "Show push token",
+    "copyPushToken": "Copy push token",
+    "pushTokenUnavailable": "No push token registered yet.",
+    "sendTestCrash": "Send test crash",
+    "sendTestEvent": "Send test event",
+    "statusReminderScheduled": "Reminder scheduled for 1 minute from now.",
+    "statusCrashSent": "Test crash sent to Sentry.",
+    "statusEventSent": "Test event sent to PostHog."
   }
 }
