@@ -164,6 +164,76 @@ describe('CC-2a Dose generator pure logic (apps/carecircle/src/features/meds/log
     ]);
   });
 
+  it('counts every_n_days from startDate even when the window starts mid-cycle (added in review)', () => {
+    const { materializeDoseTimes } = loadDoseGeneratorLogic();
+
+    // start_date = 2026-11-01, n = 3: dose days are 11-01, 11-04, 11-07, 11-10, 11-13.
+    // The hourly job's window almost never starts on start_date. A window that starts on 11-05
+    // must still give 11-07 and 11-10, never 11-05 or 11-08 (counting from the window start).
+    const every3DaysMed = makeMed({
+      startDate: '2026-11-01',
+      schedule: { kind: 'every_n_days', n: 3, times: ['08:00'] },
+    });
+    const slots = materializeDoseTimes(
+      every3DaysMed,
+      'Europe/Paris',
+      new Date('2026-11-05T00:00:00.000Z'),
+      new Date('2026-11-11T23:00:00.000Z'),
+    );
+    expect(slots.map((s) => ({ localDate: s.localDate, dueAt: s.dueAt }))).toEqual([
+      { localDate: '2026-11-07', dueAt: '2026-11-07T07:00:00.000Z' },
+      { localDate: '2026-11-10', dueAt: '2026-11-10T07:00:00.000Z' },
+    ]);
+
+    // Window entirely before start_date: nothing.
+    expect(
+      materializeDoseTimes(
+        every3DaysMed,
+        'Europe/Paris',
+        '2026-10-28T00:00:00.000Z',
+        '2026-10-31T22:00:00.000Z',
+      ),
+    ).toEqual([]);
+  });
+
+  it('finds doses whose local date differs from the UTC date at either end of the window (added in review)', () => {
+    const { materializeDoseTimes } = loadDoseGeneratorLogic();
+
+    // America/Los_Angeles (UTC-8): Sunday 2026-11-15 22:30 local = 2026-11-16T06:30:00.000Z.
+    // A window that starts at 06:00Z on the 16th (22:00 on the 15th in Los Angeles), for example
+    // re-materializing right after a schedule edit, must include tonight's 22:30 dose.
+    const laEveningMed = makeMed({ schedule: { kind: 'daily', times: ['22:30'] } });
+    expect(
+      materializeDoseTimes(
+        laEveningMed,
+        'America/Los_Angeles',
+        '2026-11-16T06:00:00.000Z',
+        '2026-11-16T07:00:00.000Z',
+      ),
+    ).toEqual([
+      {
+        medicationId: MED_ID,
+        circleId: CIRCLE_ID,
+        dueAt: '2026-11-16T06:30:00.000Z',
+        localDate: '2026-11-15',
+        requestedTime: '22:30',
+        adjustedLocalTime: '22:30',
+      },
+    ]);
+
+    // Asia/Tokyo (UTC+9): Monday 2026-11-16 08:00 local = 2026-11-15T23:00:00.000Z.
+    // A window that ends late on the 15th in UTC must include it.
+    const tokyoMorningMed = makeMed({ schedule: { kind: 'daily', times: ['08:00'] } });
+    expect(
+      materializeDoseTimes(
+        tokyoMorningMed,
+        'Asia/Tokyo',
+        '2026-11-15T22:00:00.000Z',
+        '2026-11-15T23:30:00.000Z',
+      ).map((s) => ({ localDate: s.localDate, dueAt: s.dueAt })),
+    ).toEqual([{ localDate: '2026-11-16', dueAt: '2026-11-15T23:00:00.000Z' }]);
+  });
+
   it('creates zero events for as_needed medications and inactive medications', () => {
     const { materializeDoseTimes } = loadDoseGeneratorLogic();
 

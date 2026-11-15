@@ -12,7 +12,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(18);
+select plan(25);
 
 -- 1. Trigger `medications_reconcile_schedule_edit` must exist on `public.medications`
 select has_trigger(
@@ -21,6 +21,11 @@ select has_trigger(
   'medications_reconcile_schedule_edit',
   'medications has trigger medications_reconcile_schedule_edit for schedule edits and pause'
 );
+
+-- Added in review: the trigger reads these two Vault secrets to call materialize-doses with pg_net
+-- (the same secrets the hourly pg_cron job uses). Created inside this rolled-back transaction.
+select vault.create_secret('http://cc2a-test.invalid', 'project_url');
+select vault.create_secret('cc2a-test-cron-secret-0123456789abcdef', 'cron_secret');
 
 -- Seed owner, circle, and two active medications
 insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -76,6 +81,20 @@ values
     true,
     'manual'
   );
+
+-- Added in review: adding a medicine must materialize its doses right away. The hourly job only looks
+-- 48 h ahead from the time it runs, so a medicine added at 10:05 with a 10:30 dose would otherwise get
+-- no 10:30 event. The trigger queues one pg_net call per medicine, naming it, with the cron secret.
+select is(
+  (select count(*)::int from net.http_request_queue
+    where url = 'http://cc2a-test.invalid/functions/v1/materialize-doses'
+      and method = 'POST'
+      and headers->>'Authorization' = 'Bearer cc2a-test-cron-secret-0123456789abcdef'
+      and convert_from(body, 'UTF8')::jsonb->>'medication_id' in (
+        'cc2a2001-0000-4000-8000-000000000001', 'cc2a2002-0000-4000-8000-000000000002')),
+  2,
+  'adding two medicines queues one materialize-doses call for each, with the cron secret'
+);
 
 -- 2. Server job materializes pending doses twice: zero duplicates, acted_by is null, zero dose log lines
 insert into public.dose_events (medication_id, circle_id, due_at)
@@ -259,6 +278,13 @@ select is(
   'log_entries records the med_change line for the schedule edit (1 insert + 1 update)'
 );
 
+select is(
+  (select count(*)::int from net.http_request_queue
+    where convert_from(body, 'UTF8')::jsonb->>'medication_id' = 'cc2a2001-0000-4000-8000-000000000001'),
+  2,
+  'a schedule edit queues a materialize-doses call for that medicine right away (added in review)'
+);
+
 -- 4. Editing a non-schedule field (e.g. instructions) does NOT delete future pending doses
 insert into public.dose_events (id, medication_id, circle_id, due_at, status)
 values (
@@ -279,6 +305,72 @@ select is(
   (select count(*)::int from public.dose_events where id = 'cc2a3007-0000-4000-8000-000000000007'::uuid),
   1,
   'editing instructions alone does not delete future pending doses'
+);
+
+select is(
+  (select count(*)::int from net.http_request_queue
+    where convert_from(body, 'UTF8')::jsonb->>'medication_id' = 'cc2a2001-0000-4000-8000-000000000001'),
+  2,
+  'editing instructions alone queues no materialize-doses call (added in review)'
+);
+
+-- Added in review: changing end_date or start_date changes which days get doses, so it is a schedule edit too.
+insert into public.dose_events (id, medication_id, circle_id, due_at, status)
+values (
+  'cc2a3008-0000-4000-8000-000000000008'::uuid,
+  'cc2a2001-0000-4000-8000-000000000001'::uuid,
+  'cc2ac001-0000-4000-8000-000000000001'::uuid,
+  date_trunc('hour', now()) + interval '30 hours',
+  'pending'
+);
+
+set local role authenticated;
+update public.medications
+   set end_date = current_date - 1
+ where id = 'cc2a2001-0000-4000-8000-000000000001'::uuid;
+set local role postgres;
+
+select is(
+  (select count(*)::int from public.dose_events where id = 'cc2a3008-0000-4000-8000-000000000008'::uuid),
+  0,
+  'ending a medicine (end_date in the past) deletes its future pending dose_events (added in review)'
+);
+
+select is(
+  (select count(*)::int from public.dose_events where id in (
+    'cc2a3003-0000-4000-8000-000000000003'::uuid,
+    'cc2a3004-0000-4000-8000-000000000004'::uuid,
+    'cc2a3005-0000-4000-8000-000000000005'::uuid)),
+  3,
+  'ending a medicine leaves its given, skipped and missed events (added in review)'
+);
+
+insert into public.dose_events (id, medication_id, circle_id, due_at, status)
+values (
+  'cc2a3009-0000-4000-8000-000000000009'::uuid,
+  'cc2a2001-0000-4000-8000-000000000001'::uuid,
+  'cc2ac001-0000-4000-8000-000000000001'::uuid,
+  date_trunc('hour', now()) + interval '31 hours',
+  'pending'
+);
+
+set local role authenticated;
+update public.medications
+   set start_date = current_date + 3, end_date = null
+ where id = 'cc2a2001-0000-4000-8000-000000000001'::uuid;
+set local role postgres;
+
+select is(
+  (select count(*)::int from public.dose_events where id = 'cc2a3009-0000-4000-8000-000000000009'::uuid),
+  0,
+  'moving start_date later deletes future pending dose_events before it (added in review)'
+);
+
+select is(
+  (select count(*)::int from public.dose_events
+    where medication_id = 'cc2a2001-0000-4000-8000-000000000001'::uuid and status = 'pending' and due_at < now()),
+  1,
+  'past pending dose_events survive every edit (added in review)'
 );
 
 -- 5. Pausing a medication (active = false) deletes its future pending doses without writing dose log lines
