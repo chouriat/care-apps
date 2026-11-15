@@ -1,5 +1,28 @@
 export { camelToSnake, snakeToCamel } from '../case';
 export {
+  ALLOWED_ANALYTICS_EVENTS,
+  AnalyticsValidationError,
+  createAnalyticsClient,
+  createCrashReporter,
+  scrubSensitiveText,
+  validateAnalyticsEvent,
+  type AllowedCrashTags,
+  type AnalyticsClient,
+  type CareCircleAnalyticsEventMap,
+  type CareCircleEventName,
+  type CrashFeatureTag,
+  type CrashReporter,
+  type DoseActionStatusMetric,
+  type EntitlementMetric,
+  type ExactProperties,
+  type MedAddedSourceMetric,
+  type MemberRoleMetric,
+  type PaywallTriggerMetric,
+  type PostHogAdapter,
+  type SentryAdapter,
+  type SentryScopeContext,
+} from './analytics';
+export {
   SESSION_STORAGE_KEY,
   buildSupabaseAuthOptions,
   createAuthController,
