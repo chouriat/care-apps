@@ -23,7 +23,9 @@ email_sent = 100
 
 [storage]
 enabled = true
-file_size_limit = "2MiB"
+# The 2 MB limit for prescription photos is set on the prescription-photos bucket itself (migration).
+# Do not lower this global limit: visit-note audio (up to 10 minutes, CC-5a) uses the same Storage.
+file_size_limit = "50MiB"
 
 [functions.revenuecat-webhook]
 verify_jwt = false

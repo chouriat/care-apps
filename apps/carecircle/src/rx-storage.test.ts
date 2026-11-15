@@ -40,6 +40,38 @@ function loadRxStorageModule(): RxStorageModule {
 const CIRCLE_ID = 'cc4ac001-0000-4000-8000-000000000001';
 const PHOTO_ID = '11111111-1111-4111-8111-111111111111';
 
+// A buffer that starts like a real JPEG file (FF D8 FF).
+function jpegBytes(size: number): Uint8Array {
+  const bytes = new Uint8Array(size);
+  bytes.set([0xff, 0xd8, 0xff, 0xe0]);
+  return bytes;
+}
+
+type Call = { kind: 'upload' | 'remove'; bucket: string; arg: unknown };
+
+function fakeSupabase(opts: { uploadError?: string; removeError?: string } = {}) {
+  const calls: Call[] = [];
+  const supabase: RxStorageSupabaseLike = {
+    storage: {
+      from: (bucket) => ({
+        upload: async (path) => {
+          calls.push({ kind: 'upload', bucket, arg: path });
+          return opts.uploadError
+            ? { data: null, error: { message: opts.uploadError } }
+            : { data: { path }, error: null };
+        },
+        remove: async (paths) => {
+          calls.push({ kind: 'remove', bucket, arg: paths });
+          return opts.removeError
+            ? { data: null, error: { message: opts.removeError } }
+            : { data: paths.map((name) => ({ name })), error: null };
+        },
+      }),
+    },
+  };
+  return { supabase, calls };
+}
+
 describe('Prescription photo Storage helpers (apps/carecircle/src/features/meds/rx-storage.ts)', () => {
   it('enforces bucket name prescription-photos, 2 MB limit, and <circle_id>/<uuid>.jpg path format', () => {
     const { PRESCRIPTION_PHOTOS_BUCKET, MAX_PRESCRIPTION_PHOTO_BYTES, buildPrescriptionPhotoPath } =
@@ -81,7 +113,7 @@ describe('Prescription photo Storage helpers (apps/carecircle/src/features/meds/
         supabase,
         circleId: CIRCLE_ID,
         photoId: PHOTO_ID,
-        bytes: new Uint8Array(1024),
+        bytes: jpegBytes(1024),
         contentType: 'image/png',
       }),
     ).rejects.toThrow(/image\/jpeg/i);
@@ -91,7 +123,7 @@ describe('Prescription photo Storage helpers (apps/carecircle/src/features/meds/
         supabase,
         circleId: CIRCLE_ID,
         photoId: PHOTO_ID,
-        bytes: new Uint8Array(MAX_PRESCRIPTION_PHOTO_BYTES + 1),
+        bytes: jpegBytes(MAX_PRESCRIPTION_PHOTO_BYTES + 1),
         contentType: 'image/jpeg',
       }),
     ).rejects.toThrow(/2 MB|size/i);
@@ -102,7 +134,7 @@ describe('Prescription photo Storage helpers (apps/carecircle/src/features/meds/
       supabase,
       circleId: CIRCLE_ID,
       photoId: PHOTO_ID,
-      bytes: new Uint8Array(4096),
+      bytes: jpegBytes(4096),
       contentType: 'image/jpeg',
     });
 
@@ -146,5 +178,85 @@ describe('Prescription photo Storage helpers (apps/carecircle/src/features/meds/
     await expect(
       deletePrescriptionPhoto({ supabase, imagePath: 'invalid-path.jpg' }),
     ).rejects.toThrow(/imagePath/i);
+  });
+
+  it('only builds lowercase <uuid>/<uuid>.jpg paths (the Storage policy refuses anything else)', () => {
+    const { buildPrescriptionPhotoPath } = loadRxStorageModule();
+    const lower = `${CIRCLE_ID}/${PHOTO_ID}.jpg`;
+    // Either refuse the uppercase id, or turn it into the lowercase path. Never an uppercase path.
+    const outcome = (circleId: string, photoId: string): string => {
+      try {
+        return buildPrescriptionPhotoPath(circleId, photoId);
+      } catch (e) {
+        return /circleId|photoId/i.test(String(e)) ? 'refused' : `wrong error: ${String(e)}`;
+      }
+    };
+    expect([lower, 'refused']).toContain(outcome(CIRCLE_ID.toUpperCase(), PHOTO_ID));
+    expect([lower, 'refused']).toContain(outcome(CIRCLE_ID, PHOTO_ID.toUpperCase()));
+    expect(() => buildPrescriptionPhotoPath(`../${CIRCLE_ID}`, PHOTO_ID)).toThrow(/circleId/i);
+    expect(() => buildPrescriptionPhotoPath(CIRCLE_ID, `${PHOTO_ID}.jpg`)).toThrow(/photoId/i);
+  });
+
+  it('refuses bytes that are not a JPEG file even when contentType says image/jpeg', async () => {
+    const { uploadPrescriptionPhoto } = loadRxStorageModule();
+    const { supabase, calls } = fakeSupabase();
+    const png = new Uint8Array(1024);
+    png.set([0x89, 0x50, 0x4e, 0x47]);
+    await expect(
+      uploadPrescriptionPhoto({
+        supabase,
+        circleId: CIRCLE_ID,
+        photoId: PHOTO_ID,
+        bytes: png,
+        contentType: 'image/jpeg',
+      }),
+    ).rejects.toThrow(/jpeg/i);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('a Storage upload error is thrown, never reported as an uploaded imagePath', async () => {
+    const { uploadPrescriptionPhoto } = loadRxStorageModule();
+    const { supabase, calls } = fakeSupabase({
+      uploadError: 'new row violates row-level security policy',
+    });
+    await expect(
+      uploadPrescriptionPhoto({
+        supabase,
+        circleId: CIRCLE_ID,
+        photoId: PHOTO_ID,
+        bytes: jpegBytes(2048),
+        contentType: 'image/jpeg',
+      }),
+    ).rejects.toThrow();
+    expect(calls).toEqual([
+      { kind: 'upload', bucket: 'prescription-photos', arg: `${CIRCLE_ID}/${PHOTO_ID}.jpg` },
+    ]);
+  });
+
+  it('delete: a Storage error is thrown (the caller decides), and a bad imagePath never reaches Storage', async () => {
+    const { deletePrescriptionPhoto } = loadRxStorageModule();
+
+    const failing = fakeSupabase({ removeError: 'network down' });
+    await expect(
+      deletePrescriptionPhoto({
+        supabase: failing.supabase,
+        imagePath: `${CIRCLE_ID}/${PHOTO_ID}.jpg`,
+      }),
+    ).rejects.toThrow();
+
+    const { supabase, calls } = fakeSupabase();
+    for (const bad of [
+      '',
+      `${CIRCLE_ID}`,
+      `${CIRCLE_ID}/`,
+      `${CIRCLE_ID}/${PHOTO_ID}.png`,
+      `${CIRCLE_ID}/nested/${PHOTO_ID}.jpg`,
+      `../${CIRCLE_ID}/${PHOTO_ID}.jpg`,
+    ]) {
+      await expect(deletePrescriptionPhoto({ supabase, imagePath: bad })).rejects.toThrow(
+        /imagePath/i,
+      );
+    }
+    expect(calls).toHaveLength(0);
   });
 });
