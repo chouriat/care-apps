@@ -21,5 +21,9 @@ enable_signup = true
 [auth.rate_limit]
 email_sent = 100
 
+[storage]
+enabled = true
+file_size_limit = "2MiB"
+
 [functions.revenuecat-webhook]
 verify_jwt = false
