@@ -8,6 +8,7 @@ export {
   validateAnalyticsEvent,
   type AllowedCrashTags,
   type AnalyticsClient,
+  type AnalyticsClientOptions,
   type CareCircleAnalyticsEventMap,
   type CareCircleEventName,
   type CrashFeatureTag,

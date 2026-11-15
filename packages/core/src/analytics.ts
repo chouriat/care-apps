@@ -133,6 +133,15 @@ export interface PostHogAdapter {
   capture(event: string, properties?: Record<string, string | number>): void | Promise<void>;
 }
 
+export interface AnalyticsClientOptions {
+  /**
+   * When true (`__DEV__`), invalid events throw `AnalyticsValidationError` immediately.
+   * When false (production), invalid events are dropped and reported once via `onValidationError`.
+   */
+  isDev?: boolean;
+  onValidationError?: (error: AnalyticsValidationError) => void;
+}
+
 export interface AnalyticsClient {
   track<
     E extends CareCircleEventName,
@@ -197,16 +206,55 @@ export function validateAnalyticsEvent(
   return sanitized;
 }
 
-export function createAnalyticsClient(adapter: PostHogAdapter): AnalyticsClient {
+function resolveDefaultIsDev(): boolean {
+  const globalDev = (globalThis as { __DEV__?: unknown }).__DEV__;
+  if (typeof globalDev === 'boolean') {
+    return globalDev;
+  }
+  return true;
+}
+
+export function createAnalyticsClient(
+  adapter: PostHogAdapter,
+  options?: AnalyticsClientOptions,
+): AnalyticsClient {
+  const reportedValidationErrors = new Set<string>();
+
+  const validateAndCapture = async (
+    event: string,
+    rawProperties?: Record<string, unknown>,
+  ): Promise<void> => {
+    const isDev = options?.isDev ?? resolveDefaultIsDev();
+    let validated: Record<string, string | number>;
+    try {
+      validated = validateAnalyticsEvent(event, rawProperties);
+    } catch (err) {
+      if (isDev) {
+        throw err;
+      }
+      if (err instanceof AnalyticsValidationError && options?.onValidationError) {
+        const dedupeKey = `${event}:${err.message}`;
+        if (!reportedValidationErrors.has(dedupeKey)) {
+          reportedValidationErrors.add(dedupeKey);
+          try {
+            options.onValidationError(err);
+          } catch {
+            // Never allow error reporting to break user flows in production.
+          }
+        }
+      }
+      return;
+    }
+    await adapter.capture(event, validated);
+  };
+
   return {
     async track(event: CareCircleEventName, ...args: unknown[]): Promise<void> {
       const rawProperties = args[0] as Record<string, unknown> | undefined;
-      const validated = validateAnalyticsEvent(event, rawProperties);
-      await adapter.capture(event, validated);
+      await validateAndCapture(event, rawProperties);
     },
     async sendTestEvent(): Promise<void> {
-      const validated = validateAnalyticsEvent('cc_circle_created', { memberCount: 1 });
-      await adapter.capture('cc_circle_created', validated);
+      await validateAndCapture('cc_circle_created', { memberCount: 1 });
     },
   };
 }

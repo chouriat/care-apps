@@ -150,6 +150,41 @@ describe('F-7 Analytics & Crash Reporting (@carecircle/core/analytics)', () => {
     ).rejects.toThrow(AnalyticsValidationError);
 
     expect(captured).toHaveLength(0);
+
+    // In production (isDev: false), invalid events are dropped without throwing and reported once to Sentry.
+    const reportedErrors: AnalyticsValidationError[] = [];
+    const prodClient = createAnalyticsClient(
+      {
+        capture(event) {
+          captured.push(event);
+        },
+      },
+      {
+        isDev: false,
+        onValidationError(err) {
+          reportedErrors.push(err);
+        },
+      },
+    );
+
+    await expect(
+      (prodClient.track as (e: string, p?: unknown) => Promise<void>)('cc_med_added', {
+        source: 'manual',
+        email: 'user@example.com',
+      }),
+    ).resolves.toBeUndefined();
+
+    // Calling the same invalid event again still drops it and does not duplicate the Sentry report.
+    await expect(
+      (prodClient.track as (e: string, p?: unknown) => Promise<void>)('cc_med_added', {
+        source: 'manual',
+        email: 'second@example.com',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(captured).toHaveLength(0);
+    expect(reportedErrors).toHaveLength(1);
+    expect(reportedErrors[0]?.message).toMatch(/Unlisted analytics property "email"/);
   });
 
   it('scrubs emails, JWTs, Bearer tokens, and Expo push tokens before forwarding crashes to Sentry', () => {
