@@ -5,7 +5,7 @@ import {
   scheduleLocalReminder,
   type LocalNotificationAdapter,
   type LocalNotificationRequest,
-  type PushTokenRow,
+  type PushTokenRegistration,
 } from './index';
 
 describe('F-6 Notifications helper (@carecircle/core)', () => {
@@ -166,53 +166,43 @@ describe('F-6 Notifications helper (@carecircle/core)', () => {
   });
 
   it('validates and registers Expo push tokens into push_tokens', async () => {
-    const stored: PushTokenRow[] = [];
+    const stored: PushTokenRegistration[] = [];
     const store = {
-      upsertPushToken: async (row: PushTokenRow) => {
+      registerPushToken: async (row: PushTokenRegistration) => {
         stored.push(row);
         return { error: null };
       },
     };
-    const fixedNow = new Date('2026-11-15T01:00:00.000Z');
     const row = await registerPushToken(store, {
-      userId: ' 11111111-1111-4111-8111-111111111111 ',
       token: ' ExponentPushToken[abc123_XYZ-789] ',
       platform: 'ios',
-      now: fixedNow,
     });
 
-    expect(row).toEqual({
-      user_id: '11111111-1111-4111-8111-111111111111',
-      token: 'ExponentPushToken[abc123_XYZ-789]',
-      platform: 'ios',
-      updated_at: '2026-11-15T01:00:00.000Z',
-    });
-    expect(stored).toHaveLength(1);
+    // No user id is sent: the database takes the user from the session.
+    expect(row).toEqual({ token: 'ExponentPushToken[abc123_XYZ-789]', platform: 'ios' });
+    expect(stored).toEqual([{ token: 'ExponentPushToken[abc123_XYZ-789]', platform: 'ios' }]);
 
     await expect(
       registerPushToken(store, {
-        userId: '   ',
         token: 'ExponentPushToken[abc123_XYZ-789]',
-        platform: 'ios',
+        platform: 'web' as 'ios',
       }),
-    ).rejects.toThrow(/userId is required/i);
+    ).rejects.toThrow(/ios or android/i);
 
     await expect(
       registerPushToken(store, {
-        userId: '11111111-1111-4111-8111-111111111111',
         token: 'not-an-expo-token',
         platform: 'android',
       }),
     ).rejects.toThrow(/Expo push token/i);
 
     const failingStore = {
-      upsertPushToken: async () => ({
+      registerPushToken: async () => ({
         error: { message: 'RLS violation', code: '42501' },
       }),
     };
     await expect(
       registerPushToken(failingStore, {
-        userId: '11111111-1111-4111-8111-111111111111',
         token: 'ExpoPushToken[abc123_XYZ-789]',
         platform: 'android',
       }),

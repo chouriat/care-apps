@@ -14,6 +14,10 @@ export type SendPushDeps = {
 };
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
+// Expo accepts "an array of up to 100 message objects" per request; more fails the whole request
+// with PUSH_TOO_MANY_NOTIFICATIONS. Checked 15 Nov 2026:
+// https://docs.expo.dev/push-notifications/sending-notifications/
+const EXPO_MAX_MESSAGES_PER_REQUEST = 100;
 
 const sendPushRequestSchema = z.object({
   userIds: z.array(z.string().uuid()).min(1).max(100),
@@ -172,43 +176,46 @@ export function createSendPushHandler(deps: SendPushDeps = {}) {
       headers.authorization = `Bearer ${expoAccessToken}`;
     }
 
+    let sent = 0;
+    const staleTokens: string[] = [];
     try {
-      const res = await fetchImpl(EXPO_PUSH_URL, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(messages),
-      });
-      if (!res.ok) {
-        console.warn('send_push_expo_http_error', { status: res.status });
-        return json(
-          {
-            ok: false,
-            error: {
-              code: 'PROVIDER_ERROR',
-              message: 'Expo push service unavailable.',
+      for (let start = 0; start < messages.length; start += EXPO_MAX_MESSAGES_PER_REQUEST) {
+        const batch = messages.slice(start, start + EXPO_MAX_MESSAGES_PER_REQUEST);
+        const res = await fetchImpl(EXPO_PUSH_URL, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(batch),
+        });
+        if (!res.ok) {
+          console.warn('send_push_expo_http_error', { status: res.status });
+          return json(
+            {
+              ok: false,
+              error: {
+                code: 'PROVIDER_ERROR',
+                message: 'Expo push service unavailable.',
+              },
             },
-          },
-          502,
-        );
-      }
+            502,
+          );
+        }
 
-      const payload = (await res.json()) as {
-        data?: Array<{
-          status?: string;
-          details?: { error?: string };
-        }>;
-      };
-      const tickets = Array.isArray(payload.data) ? payload.data : [];
-      let sent = 0;
-      const staleTokens: string[] = [];
+        const payload = (await res.json()) as {
+          data?: Array<{
+            status?: string;
+            details?: { error?: string };
+          }>;
+        };
+        const tickets = Array.isArray(payload.data) ? payload.data : [];
 
-      for (const [index, ticket] of tickets.entries()) {
-        if (ticket.status === 'ok') {
-          sent += 1;
-        } else if (ticket.details?.error === 'DeviceNotRegistered') {
-          const targetToken = uniqueTokens[index];
-          if (targetToken) {
-            staleTokens.push(targetToken);
+        for (const [index, ticket] of tickets.entries()) {
+          if (ticket.status === 'ok') {
+            sent += 1;
+          } else if (ticket.details?.error === 'DeviceNotRegistered') {
+            const targetToken = batch[index]?.to;
+            if (targetToken) {
+              staleTokens.push(targetToken);
+            }
           }
         }
       }

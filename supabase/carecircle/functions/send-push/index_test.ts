@@ -273,3 +273,95 @@ Deno.test(
     );
   },
 );
+
+Deno.test('send-push rejects a bearer that is only a prefix of the service-role key', async () => {
+  let calledFetch = false;
+  const fetchImpl: typeof fetch = async () => {
+    calledFetch = true;
+    return Response.json({});
+  };
+  for (const authHeader of [
+    `Bearer ${SERVICE_KEY.slice(0, 1)}`,
+    `Bearer ${SERVICE_KEY.slice(0, -1)}`,
+    `Bearer ${SERVICE_KEY}x`,
+  ]) {
+    const res = await invokeSendPush({ fetchImpl }, { authHeader });
+    assert(res.status === 401, `expected 401 for "${authHeader}", got ${res.status}`);
+  }
+  assert(!calledFetch, 'a partial key must never reach the token query or Expo');
+});
+
+Deno.test(
+  'send-push prunes only DeviceNotRegistered tokens, not tokens with other errors',
+  async () => {
+    const pruned: string[][] = [];
+    const res = await invokeSendPush({
+      loadTokens: async () => [
+        { user_id: USER_1, token: 'ExponentPushToken[gone]', platform: 'ios' },
+        { user_id: USER_1, token: 'ExponentPushToken[rate-limited]', platform: 'ios' },
+        { user_id: USER_2, token: 'ExponentPushToken[fine]', platform: 'android' },
+      ],
+      pruneTokens: async (tokens) => {
+        pruned.push(tokens);
+      },
+      fetchImpl: async () =>
+        Response.json({
+          data: [
+            { status: 'error', details: { error: 'DeviceNotRegistered' } },
+            { status: 'error', details: { error: 'MessageRateExceeded' } },
+            { status: 'ok', id: 'ticket-1' },
+          ],
+        }),
+    });
+    assert(
+      res.status === 200 && res.json.sent === 1,
+      `expected sent 1, got ${JSON.stringify(res)}`,
+    );
+    assert(
+      JSON.stringify(pruned) === JSON.stringify([['ExponentPushToken[gone]']]),
+      `only the unregistered token may be deleted, got ${JSON.stringify(pruned)}`,
+    );
+  },
+);
+
+Deno.test('send-push splits more than 100 messages into batches of at most 100', async () => {
+  const tokens: StoredPushToken[] = Array.from({ length: 250 }, (_, i) => ({
+    user_id: USER_1,
+    token: `ExponentPushToken[t${i}]`,
+    platform: 'ios',
+  }));
+  const batchSizes: number[] = [];
+  const pruned: string[] = [];
+  const res = await invokeSendPush({
+    loadTokens: async () => tokens,
+    pruneTokens: async (stale) => {
+      pruned.push(...stale);
+    },
+    fetchImpl: async (_input, init) => {
+      const batch = JSON.parse(String(init?.body)) as Array<{ to: string }>;
+      batchSizes.push(batch.length);
+      // The last message of every batch is unregistered, to check token-to-ticket matching.
+      return Response.json({
+        data: batch.map((_m, i) =>
+          i === batch.length - 1
+            ? { status: 'error', details: { error: 'DeviceNotRegistered' } }
+            : { status: 'ok' },
+        ),
+      });
+    },
+  });
+  assert(
+    JSON.stringify(batchSizes) === '[100,100,50]',
+    `expected batches [100,100,50], got ${JSON.stringify(batchSizes)}`,
+  );
+  assert(res.json.sent === 247, `expected 247 sent, got ${res.json.sent}`);
+  assert(
+    JSON.stringify(pruned) ===
+      JSON.stringify([
+        'ExponentPushToken[t99]',
+        'ExponentPushToken[t199]',
+        'ExponentPushToken[t249]',
+      ]),
+    `wrong tokens pruned: ${JSON.stringify(pruned)}`,
+  );
+});

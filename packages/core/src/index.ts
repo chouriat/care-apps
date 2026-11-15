@@ -28,7 +28,7 @@ export {
   type LocalTimeTriggerResult,
   type PushPlatform,
   type PushTokenRegistrationInput,
-  type PushTokenRow,
+  type PushTokenRegistration,
   type PushTokenStoreAdapter,
   type ScheduledLocalReminder,
 } from './notifications';

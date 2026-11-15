@@ -1,22 +1,23 @@
 export type PushPlatform = 'ios' | 'android';
 
-export interface PushTokenRow {
-  user_id: string;
+export interface PushTokenRegistration {
   token: string;
   platform: PushPlatform;
-  updated_at: string;
 }
 
+/**
+ * Wraps `supabase.rpc('register_push_token', { p_token, p_platform })`.
+ * The database takes the user from the session (auth.uid()), never from the app, and moves the
+ * token to the caller if another user registered it on this phone before. A plain
+ * `.from('push_tokens').upsert()` is refused by the table's grants on purpose.
+ */
 export interface PushTokenStoreAdapter {
-  upsertPushToken(row: PushTokenRow): Promise<{ error: { message: string; code?: string } | null }>;
+  registerPushToken(
+    registration: PushTokenRegistration,
+  ): Promise<{ error: { message: string; code?: string } | null }>;
 }
 
-export interface PushTokenRegistrationInput {
-  userId: string;
-  token: string;
-  platform: PushPlatform;
-  now?: Date;
-}
+export type PushTokenRegistrationInput = PushTokenRegistration;
 
 export interface LocalNotificationRequest {
   identifier?: string;
@@ -258,12 +259,8 @@ export async function scheduleLocalReminder(
 export async function registerPushToken(
   store: PushTokenStoreAdapter,
   input: PushTokenRegistrationInput,
-): Promise<PushTokenRow> {
-  const userId = input.userId.trim();
+): Promise<PushTokenRegistration> {
   const token = input.token.trim();
-  if (!userId) {
-    throw new Error('userId is required to register a push token');
-  }
   if (!EXPO_PUSH_TOKEN_REGEX.test(token)) {
     throw new Error('Invalid Expo push token format');
   }
@@ -271,14 +268,9 @@ export async function registerPushToken(
     throw new Error('Push platform must be ios or android');
   }
 
-  const row: PushTokenRow = {
-    user_id: userId,
-    token,
-    platform: input.platform,
-    updated_at: (input.now ?? new Date()).toISOString(),
-  };
+  const row: PushTokenRegistration = { token, platform: input.platform };
 
-  const { error } = await store.upsertPushToken(row);
+  const { error } = await store.registerPushToken(row);
   if (error) {
     throw new Error(`Push token registration failed (${error.code ?? 'DB_ERROR'})`);
   }
