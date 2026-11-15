@@ -1,7 +1,8 @@
 import { z } from 'npm:zod@3.24.1';
+import { PROMPTS } from './prompts.ts';
 
 export type AiTaskName = 'carecircle.extractPrescription' | 'carecircle.summarizeVisit';
-export type AiProviderName = 'fake';
+export type AiProviderName = 'fake' | 'anthropic' | 'gemini';
 
 export const rxSchema = z.object({
   name: z.string().min(1),
@@ -20,29 +21,172 @@ export const visitSchema = z.object({
   questionsToAsk: z.array(z.string()),
 });
 
-const defineRoute = (task: AiTaskName, model: string, schema: z.ZodTypeAny) => ({
-  task,
-  provider: 'fake' as AiProviderName,
-  model,
-  promptFile: `packages/ai-gateway/prompts/${task.replace('.', '/')}.md`,
-  promptVersion: 'v1',
-  schema,
-  timeoutMs: 25_000,
-});
+// Sent to the providers' JSON modes. Keep to keywords both accept: Anthropic's
+// structured outputs reject minLength/minimum and similar over raw HTTP (only its
+// SDKs strip them), so the Zod schemas above stay the final check for those.
+const nullableString = { anyOf: [{ type: 'string' }, { type: 'null' }] };
 
-export type AiRouteConfig = ReturnType<typeof defineRoute>;
+export const rxJsonSchema: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'name',
+    'strength',
+    'doseText',
+    'schedule',
+    'instructions',
+    'fieldConfidence',
+    'rawText',
+  ],
+  properties: {
+    name: { type: 'string' },
+    strength: nullableString,
+    doseText: { type: 'string' },
+    schedule: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['kind'],
+      properties: {
+        kind: { type: 'string', enum: ['daily', 'weekly', 'every_n_days', 'as_needed'] },
+        times: { type: 'array', items: { type: 'string' } },
+        days: { type: 'array', items: { type: 'string' } },
+        n: { type: 'integer' },
+      },
+    },
+    instructions: nullableString,
+    fieldConfidence: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        name: { type: 'number' },
+        strength: { type: 'number' },
+        doseText: { type: 'number' },
+        schedule: { type: 'number' },
+        instructions: { type: 'number' },
+      },
+    },
+    rawText: { type: 'string' },
+  },
+};
+
+export const visitJsonSchema: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['summary', 'followUps', 'medChanges', 'questionsToAsk'],
+  properties: {
+    summary: { type: 'string' },
+    followUps: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['title'],
+        properties: {
+          title: { type: 'string' },
+          dueHint: nullableString,
+          dueDate: nullableString,
+        },
+      },
+    },
+    medChanges: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['action', 'name'],
+        properties: {
+          action: { type: 'string', enum: ['start', 'stop', 'change_dose'] },
+          medicationId: nullableString,
+          name: { type: 'string' },
+          detail: nullableString,
+        },
+      },
+    },
+    questionsToAsk: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+  },
+};
+
+export type AiRouteConfig = {
+  task: AiTaskName;
+  provider: AiProviderName;
+  model: string;
+  promptFile: string;
+  promptVersion: string;
+  schema: z.ZodTypeAny;
+  jsonSchema: Record<string, unknown>;
+  timeoutMs: number;
+  inputMicrocentsPer1k: number;
+  outputMicrocentsPer1k: number;
+  costCurrency: string;
+};
+
 const rxTask = 'carecircle.extractPrescription' as const;
 const visitTask = 'carecircle.summarizeVisit' as const;
 
+// Prices are list prices per 1M tokens, converted to microcents per 1k tokens
+// ($1 per 1M tokens = 100_000 microcents per 1k). Checked 2026-11-14:
+// - gemini-3.5-flash-lite: $0.30 in / $2.50 out (thinking billed as output),
+//   https://ai.google.dev/gemini-api/docs/pricing
+// - claude-sonnet-5-5: $2 in / $10 out, https://platform.claude.com/docs/en/about-claude/pricing
+// Re-check when a model changes. gemini-2.5-flash is closed to new API users and
+// claude-sonnet-4-20250514 was retired on 2026-06-15, so neither is used.
 export const routes: Record<AiTaskName, AiRouteConfig> = {
-  [rxTask]: defineRoute(rxTask, 'fake/extract-prescription-v1', rxSchema),
-  [visitTask]: defineRoute(visitTask, 'fake/summarize-visit-v1', visitSchema),
+  [rxTask]: {
+    task: rxTask,
+    provider: 'gemini',
+    model: 'gemini/gemini-3.5-flash-lite',
+    promptFile: PROMPTS[rxTask].promptFile,
+    promptVersion: PROMPTS[rxTask].version,
+    schema: rxSchema,
+    jsonSchema: rxJsonSchema,
+    timeoutMs: 25_000,
+    inputMicrocentsPer1k: 30_000,
+    outputMicrocentsPer1k: 250_000,
+    costCurrency: 'USD',
+  },
+  [visitTask]: {
+    task: visitTask,
+    provider: 'anthropic',
+    model: 'anthropic/claude-sonnet-5-5',
+    promptFile: PROMPTS[visitTask].promptFile,
+    promptVersion: PROMPTS[visitTask].version,
+    schema: visitSchema,
+    jsonSchema: visitJsonSchema,
+    timeoutMs: 25_000,
+    inputMicrocentsPer1k: 200_000,
+    outputMicrocentsPer1k: 1_000_000,
+    costCurrency: 'USD',
+  },
 };
 
-export type AiProviderRequest = AiRouteConfig &
-  Record<'attempt', 1 | 2> & { input: Record<string, unknown> };
-export type AiProviderResult = Record<'inputTokens' | 'outputTokens', number> & { output: unknown };
-export type AiProvider = { generate: (req: AiProviderRequest) => Promise<AiProviderResult> };
+export function estimateCostMicrocents(
+  route: Pick<AiRouteConfig, 'inputMicrocentsPer1k' | 'outputMicrocentsPer1k'>,
+  inputTokens: number,
+  outputTokens: number,
+): number {
+  const totalThousandths =
+    inputTokens * route.inputMicrocentsPer1k + outputTokens * route.outputMicrocentsPer1k;
+  return Math.floor((totalThousandths + 500) / 1_000);
+}
+
+export type AiProviderRequest = AiRouteConfig & {
+  attempt: 1 | 2;
+  input: Record<string, unknown>;
+  signal?: AbortSignal;
+};
+
+export type AiProviderResult = {
+  output: unknown;
+  inputTokens: number;
+  outputTokens: number;
+};
+
+export type AiProvider = {
+  generate: (req: AiProviderRequest) => Promise<AiProviderResult>;
+};
 
 export const FAKE_FIXTURES: Record<AiTaskName, unknown> = {
   [rxTask]: {
