@@ -3,6 +3,6 @@
   "compilerOptions": {
     "types": ["jest", "node"]
   },
-  "include": ["src/**/*.ts", "client.ts"],
+  "include": ["src/**/*.ts", "schemas/**/*.ts", "client.ts"],
   "exclude": ["node_modules", "dist"]
 }
