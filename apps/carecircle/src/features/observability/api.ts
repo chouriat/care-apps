@@ -24,7 +24,6 @@ import PostHog, { type PostHogOptions } from 'posthog-react-native';
 //   https://posthog.com/docs/libraries/react-native#configuration-options
 
 export const DEFAULT_POSTHOG_HOST = 'https://eu.i.posthog.com';
-export const POSTHOG_AUTOCAPTURE_DISABLED = false as const;
 
 export interface SentryModuleLike {
   init(options: Sentry.ReactNativeOptions): void;
@@ -75,6 +74,21 @@ export function scrubSentryBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb | null
   }
 
   const next: Breadcrumb = { ...breadcrumb };
+  if (
+    (next.category === 'fetch' || next.category === 'xhr' || next.type === 'http') &&
+    next.data &&
+    typeof next.data === 'object'
+  ) {
+    // Network breadcrumbs carry the full URL. Supabase puts filters in the query string
+    // (`push_tokens?token=eq.<token>`, `medications?name=eq.<name>`), so keep only the path.
+    const data = { ...(next.data as Record<string, unknown>) };
+    if (typeof data.url === 'string') {
+      data.url = data.url.split(/[?#]/)[0];
+    }
+    delete data['http.query'];
+    delete data['http.fragment'];
+    next.data = data;
+  }
   if (typeof next.message === 'string') {
     next.message = scrubSensitiveText(next.message);
   }
@@ -185,6 +199,10 @@ export function scrubSentryEvent<T extends Event>(event: T): T {
     next.breadcrumbs = scrubbedBreadcrumbs;
   }
 
+  if (next.extra && typeof next.extra === 'object') {
+    next.extra = scrubNestedValue(next.extra) as Record<string, unknown>;
+  }
+
   if (next.user) {
     const id = typeof next.user.id === 'string' ? next.user.id.trim() : '';
     next.user = id ? { id } : undefined;
@@ -221,24 +239,29 @@ export function buildPostHogOptions(host: string = DEFAULT_POSTHOG_HOST): PostHo
     capturePushNotificationSubscriptions: false,
     capturePushNotificationOpened: false,
     setDefaultPersonProperties: false,
+    // Crashes go to Sentry only, through the scrubber. PostHog's own exception capture would
+    // send unscrubbed messages and stacks.
     errorTracking: {
       autocapture: false,
     },
+    // No city or country looked up from the phone's IP address
+    // (https://posthog.com/docs/libraries/react-native, checked 2026-11-15; default false).
+    disableGeoip: true,
   };
 }
 
+// Each EXPO_PUBLIC_ variable is written out in full on purpose. Expo copies it into a release
+// build only where the code says `process.env.EXPO_PUBLIC_NAME` literally; through an alias
+// (`const env = process.env`) both SDKs would silently stay off in every release build.
+// https://docs.expo.dev/guides/environment-variables/ (checked 2026-11-15)
 function readDefaultEnv(): ObservabilityEnvConfig {
-  const envObj =
-    typeof process !== 'undefined' && process.env
-      ? (process.env as Record<string, string | undefined>)
-      : {};
   const globalDev = (globalThis as { __DEV__?: unknown }).__DEV__;
   return {
-    sentryDsn: envObj.EXPO_PUBLIC_SENTRY_DSN?.trim() || undefined,
-    posthogApiKey: envObj.EXPO_PUBLIC_POSTHOG_API_KEY?.trim() || undefined,
-    posthogHost: envObj.EXPO_PUBLIC_POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST,
-    nodeEnv: envObj.NODE_ENV?.trim() || undefined,
-    isDev: typeof globalDev === 'boolean' ? globalDev : envObj.NODE_ENV !== 'production',
+    sentryDsn: process.env.EXPO_PUBLIC_SENTRY_DSN?.trim() || undefined,
+    posthogApiKey: process.env.EXPO_PUBLIC_POSTHOG_API_KEY?.trim() || undefined,
+    posthogHost: process.env.EXPO_PUBLIC_POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST,
+    nodeEnv: process.env.NODE_ENV?.trim() || undefined,
+    isDev: typeof globalDev === 'boolean' ? globalDev : process.env.NODE_ENV !== 'production',
   };
 }
 

@@ -3,8 +3,9 @@ import * as Sentry from '@sentry/react-native';
 import type { Breadcrumb, ErrorEvent } from '@sentry/react-native';
 import PostHog, { type PostHogOptions } from 'posthog-react-native';
 import {
-  POSTHOG_AUTOCAPTURE_DISABLED,
   createObservabilityController,
+  scrubSentryBreadcrumb,
+  scrubSentryEvent,
 } from './features/observability/api';
 
 describe('F-7b Sentry and PostHog in the app (apps/carecircle)', () => {
@@ -70,7 +71,6 @@ describe('F-7b Sentry and PostHog in the app (apps/carecircle)', () => {
 
     expect(obs.isSentryEnabled).toBe(true);
     expect(obs.isPostHogEnabled).toBe(true);
-    expect(POSTHOG_AUTOCAPTURE_DISABLED).toBe(false);
 
     // Verify Sentry init privacy options
     expect(initSpy).toHaveBeenCalledTimes(1);
@@ -97,6 +97,7 @@ describe('F-7b Sentry and PostHog in the app (apps/carecircle)', () => {
         errorTracking: {
           autocapture: false,
         },
+        disableGeoip: true,
       } satisfies PostHogOptions,
     ]);
 
@@ -295,5 +296,33 @@ describe('F-7b Sentry and PostHog in the app (apps/carecircle)', () => {
         },
       ),
     ).rejects.toThrow(AnalyticsValidationError);
+  });
+  it('keeps only the path of network breadcrumb URLs and scrubs extra data', () => {
+    const fetchCrumb = scrubSentryBreadcrumb({
+      category: 'fetch',
+      type: 'http',
+      data: {
+        method: 'DELETE',
+        url: 'https://abc.supabase.co/rest/v1/push_tokens?token=eq.ExponentPushToken%5Babc%5D',
+        'http.query': 'token=eq.ExponentPushToken%5Babc%5D',
+        status_code: 204,
+      },
+    });
+    expect(fetchCrumb?.data).toEqual({
+      method: 'DELETE',
+      url: 'https://abc.supabase.co/rest/v1/push_tokens',
+      status_code: 204,
+    });
+
+    const xhrCrumb = scrubSentryBreadcrumb({
+      category: 'xhr',
+      data: { url: 'https://abc.supabase.co/rest/v1/medications?name=eq.Eliquis#x' },
+    });
+    expect(xhrCrumb?.data).toEqual({ url: 'https://abc.supabase.co/rest/v1/medications' });
+
+    const event = scrubSentryEvent({
+      extra: { note: 'sent to caregiver@example.com', nested: { auth: 'Bearer abc.def.ghi' } },
+    });
+    expect(JSON.stringify(event.extra)).not.toMatch(/caregiver@example\.com|abc\.def\.ghi/);
   });
 });
