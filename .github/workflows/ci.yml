@@ -133,11 +133,8 @@ jobs:
           disk-size: 6000M
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
-          script: |
-            export PATH="$HOME/.maestro/bin:$PATH"
-            adb wait-for-device
-            adb install -r apps/carecircle/android/app/build/outputs/apk/release/app-release.apk
-            maestro test apps/carecircle/maestro/sign-in-magic-link.yaml
+          # android-emulator-runner runs each script line in its own shell, so keep it to one line.
+          script: bash apps/carecircle/maestro/ci-run.sh
       - name: Keep Maestro screenshots and logs when the flow fails
         if: failure()
         uses: actions/upload-artifact@v4
