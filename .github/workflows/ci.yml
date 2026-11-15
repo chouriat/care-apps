@@ -52,7 +52,9 @@ jobs:
         with:
           node-version: 22
           # No pnpm cache here: this job installs no packages, so the store folder never exists and
-          # saving the cache fails the job whenever pnpm-lock.yaml changes.
+          # saving the cache fails the job whenever pnpm-lock.yaml changes. setup-node v5 turns the
+          # cache on by itself when package.json has a packageManager field, so turn it off.
+          package-manager-cache: false
       - uses: supabase/setup-cli@v3
         with:
           version: 3.0.0
