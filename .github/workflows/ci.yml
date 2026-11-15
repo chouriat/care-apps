@@ -26,8 +26,7 @@ jobs:
           cache: pnpm
       - uses: denoland/setup-deno@v2
         with:
-          # deno.lock is lockfile version 5, which Deno 2.1 cannot read.
-          deno-version: 2.5.6
+          deno-version: 2.1.4
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: pnpm typecheck
