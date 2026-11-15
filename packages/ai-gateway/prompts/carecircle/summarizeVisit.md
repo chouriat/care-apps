@@ -16,7 +16,7 @@ Return a JSON object with all of the following required top-level fields:
 - `followUps` (`array` of objects): Follow-up tasks or appointments mentioned during the visit. Each item has:
   - `title` (`string`, non-empty): Short actionable description (for example, `"Book blood test"`).
   - `dueHint` (`string | null`, optional): Relative timing phrase mentioned in the visit (for example, `"in 2 weeks"`), or `null` if none.
-  - `dueDate` (`string | null`, optional): ISO calendar date `"YYYY-MM-DD"` if a specific date can be determined, or `null` if unknown.
+  - `dueDate` (`string | null`, optional): ISO calendar date `"YYYY-MM-DD"` only when the visit input states a specific calendar date. You do not know today's date, so never compute a date from a relative phrase such as "in 2 weeks"; put that phrase in `dueHint` and set `dueDate` to `null`.
 - `medChanges` (`array` of objects): Medication changes discussed during the visit. Each item has:
   - `action` (`"start" | "stop" | "change_dose"`): Must be exactly one of `"start"`, `"stop"`, or `"change_dose"`.
   - `medicationId` (`string | null`):

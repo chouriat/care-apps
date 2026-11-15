@@ -64,7 +64,9 @@ const stripModelPrefix = (model: string): string => {
 };
 
 function formatUserDataMessage(input: Record<string, unknown>): string {
-  return `<user_input_data>\n${JSON.stringify(input)}\n</user_input_data>`;
+  // Escape '<' so text typed by a user cannot close the data tag early.
+  const data = JSON.stringify(input).replace(/</g, '\\u003c');
+  return `<user_input_data>\n${data}\n</user_input_data>`;
 }
 
 class ProviderHttpError extends Error {

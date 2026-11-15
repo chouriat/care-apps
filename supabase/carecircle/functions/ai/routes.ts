@@ -21,6 +21,11 @@ export const visitSchema = z.object({
   questionsToAsk: z.array(z.string()),
 });
 
+// Sent to the providers' JSON modes. Keep to keywords both accept: Anthropic's
+// structured outputs reject minLength/minimum and similar over raw HTTP (only its
+// SDKs strip them), so the Zod schemas above stay the final check for those.
+const nullableString = { anyOf: [{ type: 'string' }, { type: 'null' }] };
+
 export const rxJsonSchema: Record<string, unknown> = {
   type: 'object',
   additionalProperties: false,
@@ -34,9 +39,9 @@ export const rxJsonSchema: Record<string, unknown> = {
     'rawText',
   ],
   properties: {
-    name: { type: 'string', minLength: 1 },
-    strength: { type: ['string', 'null'] },
-    doseText: { type: 'string', minLength: 1 },
+    name: { type: 'string' },
+    strength: nullableString,
+    doseText: { type: 'string' },
     schedule: {
       type: 'object',
       additionalProperties: false,
@@ -48,7 +53,7 @@ export const rxJsonSchema: Record<string, unknown> = {
         n: { type: 'integer' },
       },
     },
-    instructions: { type: ['string', 'null'] },
+    instructions: nullableString,
     fieldConfidence: {
       type: 'object',
       additionalProperties: false,
@@ -69,7 +74,7 @@ export const visitJsonSchema: Record<string, unknown> = {
   additionalProperties: false,
   required: ['summary', 'followUps', 'medChanges', 'questionsToAsk'],
   properties: {
-    summary: { type: 'string', minLength: 1 },
+    summary: { type: 'string' },
     followUps: {
       type: 'array',
       items: {
@@ -77,9 +82,9 @@ export const visitJsonSchema: Record<string, unknown> = {
         additionalProperties: false,
         required: ['title'],
         properties: {
-          title: { type: 'string', minLength: 1 },
-          dueHint: { type: ['string', 'null'] },
-          dueDate: { type: ['string', 'null'] },
+          title: { type: 'string' },
+          dueHint: nullableString,
+          dueDate: nullableString,
         },
       },
     },
@@ -91,9 +96,9 @@ export const visitJsonSchema: Record<string, unknown> = {
         required: ['action', 'name'],
         properties: {
           action: { type: 'string', enum: ['start', 'stop', 'change_dose'] },
-          medicationId: { type: ['string', 'null'] },
-          name: { type: 'string', minLength: 1 },
-          detail: { type: ['string', 'null'] },
+          medicationId: nullableString,
+          name: { type: 'string' },
+          detail: nullableString,
         },
       },
     },
