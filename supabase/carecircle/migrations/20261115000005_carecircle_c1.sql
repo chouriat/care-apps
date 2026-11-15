@@ -203,6 +203,87 @@ create trigger circle_members_prevent_ownerless
   for each row
   execute function public.prevent_ownerless_circle();
 
+-- People named on a row (who gave a dose, who drives, who a task is for, who did it) must be
+-- members of that row's circle, so a family's data never points at someone outside the family.
+-- When a signed-in user records who gave a dose or did a task, it can only be themselves:
+-- the care log and the doctor's PDF rely on these names.
+create or replace function public.check_circle_people()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_people uuid[];
+  v_self_only uuid[];
+  v_person uuid;
+begin
+  -- Only names that this statement sets or changes are checked, so a task assigned to someone
+  -- who has since left the circle can still be edited or completed.
+  if tg_table_name = 'dose_events' then
+    v_people := array[new.acted_by];
+    if tg_op = 'UPDATE' and new.acted_by is not distinct from old.acted_by then
+      v_people := array[]::uuid[];
+    end if;
+    v_self_only := v_people;
+  elsif tg_table_name = 'tasks' then
+    v_people := array[]::uuid[];
+    v_self_only := array[]::uuid[];
+    if tg_op = 'INSERT' or new.assignee is distinct from old.assignee then
+      v_people := v_people || new.assignee;
+    end if;
+    if tg_op = 'INSERT' or new.done_by is distinct from old.done_by then
+      v_people := v_people || new.done_by;
+      v_self_only := array[new.done_by];
+    end if;
+  elsif tg_table_name = 'appointments' then
+    v_people := array[]::uuid[];
+    if tg_op = 'INSERT' or new.driver_user_id is distinct from old.driver_user_id then
+      v_people := array[new.driver_user_id];
+    end if;
+    v_self_only := array[]::uuid[];
+  else
+    return new;
+  end if;
+
+  foreach v_person in array v_people loop
+    if v_person is not null and not exists (
+      select 1 from public.circle_members
+      where circle_id = new.circle_id and user_id = v_person
+    ) then
+      raise exception 'Only members of this circle can be named on its rows' using errcode = '23503';
+    end if;
+  end loop;
+
+  if (select auth.uid()) is not null then
+    foreach v_person in array v_self_only loop
+      if v_person is not null and v_person <> (select auth.uid()) then
+        raise exception 'You can only record an action as yourself' using errcode = '42501';
+      end if;
+    end loop;
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all on function public.check_circle_people() from public, anon, authenticated;
+
+create trigger dose_events_check_people
+  before insert or update on public.dose_events
+  for each row
+  execute function public.check_circle_people();
+
+create trigger tasks_check_people
+  before insert or update on public.tasks
+  for each row
+  execute function public.check_circle_people();
+
+create trigger appointments_check_people
+  before insert or update on public.appointments
+  for each row
+  execute function public.check_circle_people();
+
 -- Enable Row Level Security on all 9 tables
 alter table public.circles enable row level security;
 alter table public.circle_members enable row level security;
@@ -239,8 +320,10 @@ grant all on
   public.log_entries
 to service_role;
 
--- circles: members read; owner updates/deletes; creation goes through create_circle RPC in CC-1a
-grant select, update, delete on public.circles to authenticated;
+-- circles: members read; owner updates/deletes; creation goes through create_circle RPC in CC-1a.
+-- Only the editable fields: id, created_by and created_at are never rewritten from the app.
+grant select, delete on public.circles to authenticated;
+grant update (name, care_recipient_name, care_recipient_dob, timezone) on public.circles to authenticated;
 
 -- circle_members: members read; owner updates role or removes others; non-owner can leave; joining goes through accept_invite RPC in CC-1b
 grant select, delete on public.circle_members to authenticated;
@@ -250,17 +333,24 @@ grant update (role) on public.circle_members to authenticated;
 grant select, delete on public.invites to authenticated;
 grant insert (circle_id, role, expires_at) on public.invites to authenticated;
 
--- care coordination tables: members read; owner/helper insert, update, delete
-grant select, insert, update, delete on
+-- care coordination tables: members read; owner/helper insert, update, delete.
+-- Updates never touch id or circle_id: someone who is a helper in family A and in family B
+-- must not be able to move A's medicine, dose, appointment or task into family B.
+grant select, insert, delete on
   public.medications,
   public.dose_events,
   public.appointments,
   public.tasks
 to authenticated;
+grant update (name, strength, dose_text, schedule, instructions, start_date, end_date, active, source)
+  on public.medications to authenticated;
+grant update (medication_id, due_at, status, acted_by, acted_at) on public.dose_events to authenticated;
+grant update (title, starts_at, ends_at, location, driver_user_id, notes) on public.appointments to authenticated;
+grant update (title, due_at, assignee, done_at, done_by, source) on public.tasks to authenticated;
 
 -- visit_notes: created_by is always set by the database default (auth.uid()) and cannot be spoofed or rewritten
 grant select, delete on public.visit_notes to authenticated;
-grant insert (id, circle_id, appointment_id, transcript, summary, created_at) on public.visit_notes to authenticated;
+grant insert (id, circle_id, appointment_id, transcript, summary) on public.visit_notes to authenticated;
 grant update (appointment_id, transcript, summary) on public.visit_notes to authenticated;
 
 -- log_entries: members read; only security-definer triggers insert; nobody updates or deletes
@@ -444,7 +534,7 @@ create policy appointments_delete_caregiver
   );
 
 -- RLS Policies: tasks
-create policy tasks_select_member
+create policy tasks_insert_caregiver
   on public.tasks
   for insert
   to authenticated
@@ -568,7 +658,7 @@ begin
     v_type := 'dose'::public.log_type;
     v_ref_id := new.id;
     v_summary := format('Dose marked %s', new.status::text);
-    v_actor := coalesce(new.acted_by, v_actor);
+    v_actor := coalesce(v_actor, new.acted_by);
   elsif tg_table_name = 'medications' then
     v_circle_id := coalesce(new.circle_id, old.circle_id);
     v_type := 'med_change'::public.log_type;
@@ -585,7 +675,7 @@ begin
     v_ref_id := coalesce(new.id, old.id);
     v_summary := format('Task %s: %s', lower(tg_op), coalesce(new.title, old.title));
     if tg_op = 'UPDATE' and new.done_by is not null then
-      v_actor := coalesce(new.done_by, v_actor);
+      v_actor := coalesce(v_actor, new.done_by);
     end if;
   elsif tg_table_name = 'visit_notes' then
     v_circle_id := coalesce(new.circle_id, old.circle_id);
