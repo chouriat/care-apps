@@ -87,6 +87,14 @@
     "sendTestEvent": "Send test event",
     "statusReminderScheduled": "Reminder scheduled for 1 minute from now.",
     "statusCrashSent": "Test crash sent to Sentry.",
-    "statusEventSent": "Test event sent to PostHog."
+    "statusEventSent": "Test event sent to PostHog.",
+    "sentryLabel": "Sentry",
+    "posthogLabel": "PostHog",
+    "on": "on",
+    "off": "off (no key in this build)",
+    "statusReminderFailed": "Could not schedule the reminder. Check that notifications are allowed.",
+    "statusSentryOff": "Sentry is off in this build, so nothing was sent. Add EXPO_PUBLIC_SENTRY_DSN and build again.",
+    "statusPostHogOff": "PostHog is off in this build, so nothing was sent. Add EXPO_PUBLIC_POSTHOG_API_KEY and build again.",
+    "statusEventFailed": "The test event could not be sent."
   }
 }

@@ -11,6 +11,8 @@ import { getAppObservability } from '../src/features/observability/api';
 
 const FAKE_DOSE_EVENT_ID = '00000000-0000-4000-8000-000000000001';
 
+// Only the exact value '1' turns the screen on. eas.json sets it for `development` and
+// `preview`; app.config.js fails any other EAS build that has it.
 export function isDevChecksEnabled(): boolean {
   return (
     (globalThis as { __DEV__?: boolean }).__DEV__ === true ||
@@ -18,7 +20,7 @@ export function isDevChecksEnabled(): boolean {
   );
 }
 
-function oneMinuteFromNowInPhoneTz(nowMs: number = Date.now()): {
+export function oneMinuteFromNowInPhoneTz(nowMs: number = Date.now()): {
   date: string;
   time: string;
   timeZone: string;
@@ -54,16 +56,26 @@ export default function DevChecksScreen() {
   }
 
   const d = en.devChecks;
+  const obs = getAppObservability();
   return (
     <UI.Screen accessibilityLabel={d.title}>
       <UI.Header title={d.title} subtitle={d.subtitle} />
+      {/* Shows at once when a build is missing the Sentry or PostHog key (the PR #19 bug). */}
+      <Text testID="dev-checks-sdk-state" style={[t.bodySmall, { color: c.textSecondary }]}>
+        {`${d.sentryLabel}: ${obs.isSentryEnabled ? d.on : d.off} · ${d.posthogLabel}: ${
+          obs.isPostHogEnabled ? d.on : d.off
+        }`}
+      </Text>
       <UI.Button
         label={d.testReminder}
         onPress={() => {
-          void scheduleNeutralDoseReminder({
+          scheduleNeutralDoseReminder({
             ...oneMinuteFromNowInPhoneTz(),
             doseEventId: FAKE_DOSE_EVENT_ID,
-          }).then(() => setStatus(d.statusReminderScheduled));
+          }).then(
+            () => setStatus(d.statusReminderScheduled),
+            () => setStatus(d.statusReminderFailed),
+          );
         }}
       />
       <UI.Button
@@ -98,20 +110,25 @@ export default function DevChecksScreen() {
         label={d.sendTestCrash}
         variant="danger"
         onPress={() => {
-          getAppObservability().crashReporter.sendTestCrash();
-          setStatus(d.statusCrashSent);
+          obs.crashReporter.sendTestCrash();
+          setStatus(obs.isSentryEnabled ? d.statusCrashSent : d.statusSentryOff);
         }}
       />
       <UI.Button
         label={d.sendTestEvent}
         variant="secondary"
         onPress={() => {
-          void getAppObservability()
-            .analytics.sendTestEvent()
-            .then(() => setStatus(d.statusEventSent));
+          obs.analytics.sendTestEvent().then(
+            () => setStatus(obs.isPostHogEnabled ? d.statusEventSent : d.statusPostHogOff),
+            () => setStatus(d.statusEventFailed),
+          );
         }}
       />
-      {status ? <Text style={[t.bodySmall, { color: c.textSecondary }]}>{status}</Text> : null}
+      {status ? (
+        <Text testID="dev-checks-status" style={[t.bodySmall, { color: c.textSecondary }]}>
+          {status}
+        </Text>
+      ) : null}
     </UI.Screen>
   );
 }
