@@ -19,7 +19,8 @@
       "expo-status-bar",
       "expo-secure-store",
       "expo-web-browser",
-      "expo-notifications"
+      "expo-notifications",
+      "@sentry/react-native/expo"
     ]
   }
 }
