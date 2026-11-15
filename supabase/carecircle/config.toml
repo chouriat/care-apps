@@ -29,3 +29,6 @@ file_size_limit = "50MiB"
 
 [functions.revenuecat-webhook]
 verify_jwt = false
+
+[functions.cleanup-prescription-photos]
+verify_jwt = false

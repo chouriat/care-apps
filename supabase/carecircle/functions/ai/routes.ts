@@ -264,6 +264,10 @@ export function estimateCostMicrocents(
 export type AiProviderRequest = AiRouteConfig & {
   attempt: 1 | 2;
   input: Record<string, unknown>;
+  image?: {
+    bytes: Uint8Array;
+    mimeType: 'image/jpeg';
+  };
   signal?: AbortSignal;
 };
 
