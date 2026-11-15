@@ -6,5 +6,7 @@ node_modules/
 dist/
 build/
 coverage/
+apps/carecircle/android/
+apps/carecircle/ios/
 *.env
 *.env.*

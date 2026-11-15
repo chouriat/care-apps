@@ -19,12 +19,48 @@ const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 // https://docs.expo.dev/push-notifications/sending-notifications/
 const EXPO_MAX_MESSAGES_PER_REQUEST = 100;
 
-const sendPushRequestSchema = z.object({
-  userIds: z.array(z.string().uuid()).min(1).max(100),
-  title: z.string().trim().min(1).max(120),
-  body: z.string().trim().min(1).max(500),
-  data: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
-});
+const ALLOWED_PUSH_DATA_KEYS = new Set([
+  'circleId',
+  'doseEventId',
+  'medicationId',
+  'taskId',
+  'appointmentId',
+  'visitSummaryId',
+  'reminderId',
+  'type',
+  'route',
+]);
+
+const HEALTH_DETAIL_TEXT_REGEX =
+  /\b(?:\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml|iu|units?|tablets?|capsules?|pills?|drops?|puffs?)|metformin|lisinopril|atorvastatin|amlodipine|omeprazole|insulin|warfarin|aspirin|ibuprofen|acetaminophen|paracetamol|amoxicillin|levothyroxine|prednisone|gabapentin|hydrochlorothiazide|losartan|albuterol|furosemide|pantoprazole|sertraline|prescription|diagnosis)\b/i;
+
+const sendPushRequestSchema = z
+  .object({
+    userIds: z.array(z.string().uuid()).min(1).max(100),
+    title: z.string().trim().min(1).max(120),
+    body: z.string().trim().min(1).max(500),
+    // Ids (UUIDs) or short codes only, same rule as assertSafeNotificationPayload in @carecircle/core.
+    data: z.record(z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)).optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (HEALTH_DETAIL_TEXT_REGEX.test(val.title) || HEALTH_DETAIL_TEXT_REGEX.test(val.body)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'Push title and body must be neutral and never contain medication names or dosages.',
+      });
+    }
+    if (val.data) {
+      for (const [key, value] of Object.entries(val.data)) {
+        if (!ALLOWED_PUSH_DATA_KEYS.has(key) || HEALTH_DETAIL_TEXT_REGEX.test(value)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Push data key "${key}" or value is not allowed.`,
+          });
+        }
+      }
+    }
+  });
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {

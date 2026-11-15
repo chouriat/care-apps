@@ -15,7 +15,13 @@ import {
 } from '@supabase/supabase-js';
 import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
-import { Platform } from 'react-native';
+import {
+  AppState,
+  Platform,
+  type AppStateStatus,
+  type NativeEventSubscription,
+} from 'react-native';
+import { getAppPushNotificationsController } from '../notifications/api';
 import { getAppObservability } from '../observability/api';
 
 export const APP_AUTH_REDIRECT_URL = 'carecircle://auth/callback';
@@ -28,6 +34,7 @@ const secureStoreAdapter: SecureStoreAdapter = {
 
 let cachedSupabase: SupabaseClient | null = null;
 let cachedController: AuthController | null = null;
+let appStateSubscription: NativeEventSubscription | null = null;
 
 // supabase-js reports a failed network call (status 0) as an error result, not a throw.
 // Map it to NETWORK_ERROR so the sign-in screen shows its offline state.
@@ -51,26 +58,50 @@ export function handleAuthCallbackOnce(url: string): Promise<boolean> {
   return pending;
 }
 
-function resolveSupabaseConfig(): { url: string; anonKey: string } {
+// Expo copies EXPO_PUBLIC_ variables into a release build only where the code spells out
+// `process.env.EXPO_PUBLIC_...` in full. Reading them through another object works in
+// development (Metro serves the whole env) but is empty in every release and preview build.
+// https://docs.expo.dev/guides/environment-variables/ (checked 2026-11-15)
+function readSupabaseEnv(): Record<string, string | undefined> {
+  return {
+    EXPO_PUBLIC_SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL,
+    EXPO_PUBLIC_SUPABASE_ANON_KEY: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+  };
+}
+
+export function resolveSupabaseConfig(
+  env: Record<string, string | undefined> = readSupabaseEnv(),
+  isDev: boolean = (globalThis as { __DEV__?: boolean }).__DEV__ !== false,
+): { url: string; anonKey: string } {
   const defaultLocalUrl =
     Platform.OS === 'android' ? 'http://10.0.2.2:54321' : 'http://127.0.0.1:54321';
-  const envObj =
-    typeof process !== 'undefined' && process.env
-      ? (process.env as Record<string, string | undefined>)
-      : {};
-  const url = envObj.EXPO_PUBLIC_SUPABASE_URL?.trim() || defaultLocalUrl;
-  const anonKey = envObj.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim() || 'public-anon-key-placeholder';
-  if (!envObj.EXPO_PUBLIC_SUPABASE_URL || !envObj.EXPO_PUBLIC_SUPABASE_ANON_KEY) {
-    // Without these, sign-in talks to a local Supabase that is usually not running, and the
-    // sign-in screen shows "You are offline". Say why in the dev console.
-    console.warn(
-      'CareCircle: EXPO_PUBLIC_SUPABASE_URL or EXPO_PUBLIC_SUPABASE_ANON_KEY is not set in ' +
-        'apps/carecircle/.env, so sign-in uses the local Supabase at ' +
-        defaultLocalUrl +
-        '. Set both, then restart expo start.',
+  const configuredUrl = env.EXPO_PUBLIC_SUPABASE_URL?.trim();
+  const anonKey = env.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim();
+
+  if (!configuredUrl && !isDev) {
+    throw new Error(
+      'CareCircle: Missing EXPO_PUBLIC_SUPABASE_URL environment variable in non-development build. Set it in your EAS build profile (eas.json / EAS Environment Variables).',
     );
   }
-  return { url, anonKey };
+
+  if (!anonKey) {
+    throw new Error(
+      'CareCircle: Missing EXPO_PUBLIC_SUPABASE_ANON_KEY environment variable. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in apps/carecircle/.env (or your EAS build profile), then restart expo start.',
+    );
+  }
+
+  if (!configuredUrl) {
+    // Without EXPO_PUBLIC_SUPABASE_URL in dev, sign-in talks to a local Supabase that may not be
+    // running, and the sign-in screen shows "You are offline". Say why in the dev console.
+    console.warn(
+      'CareCircle: EXPO_PUBLIC_SUPABASE_URL is not set in apps/carecircle/.env, so sign-in uses ' +
+        'the local Supabase at ' +
+        defaultLocalUrl +
+        '. Set it, then restart expo start.',
+    );
+  }
+
+  return { url: configuredUrl || defaultLocalUrl, anonKey };
 }
 
 export function getSupabaseClient(): SupabaseClient {
@@ -78,10 +109,33 @@ export function getSupabaseClient(): SupabaseClient {
     return cachedSupabase;
   }
   const { url, anonKey } = resolveSupabaseConfig();
-  cachedSupabase = createClient(url, anonKey, {
+  const client = createClient(url, anonKey, {
     auth: buildSupabaseAuthOptions(secureStoreAdapter),
   });
-  return cachedSupabase;
+  cachedSupabase = client;
+
+  // Checked 2026-11-15:
+  // Supabase React Native Auth quickstart — manage background/foreground token auto-refresh with AppState:
+  // https://supabase.com/docs/guides/auth/quickstarts/react-native
+  if (Platform.OS !== 'web' && !appStateSubscription) {
+    appStateSubscription = AppState.addEventListener('change', (state: AppStateStatus) => {
+      if (state === 'active') {
+        void client.auth.startAutoRefresh();
+      } else {
+        void client.auth.stopAutoRefresh();
+      }
+    });
+  }
+
+  return client;
+}
+
+export function resetSupabaseClientForTests(): void {
+  appStateSubscription?.remove();
+  appStateSubscription = null;
+  cachedSupabase = null;
+  cachedController = null;
+  handledCallbacks.clear();
 }
 
 export function getAppAuthController(): AuthController {
@@ -154,6 +208,7 @@ export function getAppAuthController(): AuthController {
     },
 
     async signOut() {
+      await getAppPushNotificationsController().unregisterBeforeSignOut();
       const { error } = await supabase.auth.signOut();
       return {
         error: toAdapterError(error),
@@ -170,6 +225,7 @@ export function getAppAuthController(): AuthController {
   cachedController = controller;
 
   controller.subscribe((nextState) => {
+    void getAppPushNotificationsController().syncAuthStatus(nextState.status);
     getAppObservability().syncAuthState(nextState);
   });
 

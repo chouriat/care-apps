@@ -41,6 +41,8 @@ export {
   type SupabaseAuthAdapter,
 } from './auth';
 export {
+  ALLOWED_NOTIFICATION_DATA_KEYS,
+  assertSafeNotificationPayload,
   computeUtcTriggerForLocalTime,
   isValidIanaTimeZone,
   registerPushToken,

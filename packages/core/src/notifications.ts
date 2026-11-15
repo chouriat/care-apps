@@ -68,6 +68,63 @@ const DATE_REGEX = /^(\d{4})-(\d{2})-(\d{2})$/;
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const EXPO_PUSH_TOKEN_REGEX = /^(?:ExponentPushToken|ExpoPushToken)\[[A-Za-z0-9_-]+\]$/;
 
+/**
+ * Only opaque identifiers and routing keys are permitted in notification `data`.
+ * Never put a medication name, dosage, or any other health detail in a push title, body, or `data`.
+ */
+export const ALLOWED_NOTIFICATION_DATA_KEYS = new Set<string>([
+  'circleId',
+  'doseEventId',
+  'medicationId',
+  'taskId',
+  'appointmentId',
+  'visitSummaryId',
+  'reminderId',
+  'type',
+  'route',
+]);
+
+const HEALTH_DETAIL_TEXT_REGEX =
+  /\b(?:\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml|iu|units?|tablets?|capsules?|pills?|drops?|puffs?)|metformin|lisinopril|atorvastatin|amlodipine|omeprazole|insulin|warfarin|aspirin|ibuprofen|acetaminophen|paracetamol|amoxicillin|levothyroxine|prednisone|gabapentin|hydrochlorothiazide|losartan|albuterol|furosemide|pantoprazole|sertraline|prescription|diagnosis)\b/i;
+
+// Values in `data` are ids (UUIDs) or short codes such as `dose_reminder`. No spaces, so a
+// medication name with a dose ("Metformin 500 mg") or any sentence cannot pass.
+const NOTIFICATION_DATA_VALUE_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
+
+export function assertSafeNotificationPayload(payload: {
+  title: string;
+  body: string;
+  data?: Record<string, unknown>;
+}): void {
+  const title = payload.title.trim();
+  const body = payload.body.trim();
+  if (!title || !body) {
+    throw new Error('Notification title and body must be non-empty');
+  }
+  if (HEALTH_DETAIL_TEXT_REGEX.test(title) || HEALTH_DETAIL_TEXT_REGEX.test(body)) {
+    throw new Error(
+      'Notification title and body must be neutral and never contain medication names or dosages',
+    );
+  }
+  if (payload.data) {
+    for (const [key, value] of Object.entries(payload.data)) {
+      if (!ALLOWED_NOTIFICATION_DATA_KEYS.has(key)) {
+        throw new Error(
+          `Notification data key "${key}" is not allowed; pass only opaque identifiers`,
+        );
+      }
+      if (typeof value !== 'string' || !NOTIFICATION_DATA_VALUE_REGEX.test(value)) {
+        throw new Error(
+          `Notification data value for "${key}" must be an id or code (letters, digits, - and _)`,
+        );
+      }
+      if (HEALTH_DETAIL_TEXT_REGEX.test(value)) {
+        throw new Error(`Notification data value for "${key}" must not contain health details`);
+      }
+    }
+  }
+}
+
 export function isValidIanaTimeZone(timeZone: string): boolean {
   if (!timeZone || typeof timeZone !== 'string' || timeZone.trim() !== timeZone) {
     return false;
@@ -235,9 +292,11 @@ export async function scheduleLocalReminder(
   adapter: LocalNotificationAdapter,
   input: LocalReminderInput,
 ): Promise<ScheduledLocalReminder> {
-  if (!input.title.trim() || !input.body.trim()) {
-    throw new Error('Notification title and body must be non-empty');
-  }
+  assertSafeNotificationPayload({
+    title: input.title,
+    body: input.body,
+    data: input.data,
+  });
   const resolved = computeUtcTriggerForLocalTime({
     date: input.date,
     time: input.time,

@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AuthGate } from '../src/features/auth/components';
 import { useAuthController } from '../src/features/auth/hooks';
+import { usePushNotifications } from '../src/features/notifications/hooks';
 import { useObservability } from '../src/features/observability/hooks';
 
 // Keeps every screen clear of the status bar, camera cutout, rounded corners and home
@@ -22,6 +23,7 @@ export default function RootLayout() {
   const pathname = usePathname();
   const router = useRouter();
   const { state } = useAuthController();
+  usePushNotifications(state.status);
   useObservability(state);
 
   const handleRedirect = useCallback(
