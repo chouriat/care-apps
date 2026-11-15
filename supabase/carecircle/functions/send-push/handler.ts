@@ -39,7 +39,8 @@ const sendPushRequestSchema = z
     userIds: z.array(z.string().uuid()).min(1).max(100),
     title: z.string().trim().min(1).max(120),
     body: z.string().trim().min(1).max(500),
-    data: z.record(z.string().trim().min(1).max(128)).optional(),
+    // Ids (UUIDs) or short codes only, same rule as assertSafeNotificationPayload in @carecircle/core.
+    data: z.record(z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)).optional(),
   })
   .superRefine((val, ctx) => {
     if (HEALTH_DETAIL_TEXT_REGEX.test(val.title) || HEALTH_DETAIL_TEXT_REGEX.test(val.body)) {

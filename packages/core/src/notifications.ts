@@ -87,6 +87,10 @@ export const ALLOWED_NOTIFICATION_DATA_KEYS = new Set<string>([
 const HEALTH_DETAIL_TEXT_REGEX =
   /\b(?:\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml|iu|units?|tablets?|capsules?|pills?|drops?|puffs?)|metformin|lisinopril|atorvastatin|amlodipine|omeprazole|insulin|warfarin|aspirin|ibuprofen|acetaminophen|paracetamol|amoxicillin|levothyroxine|prednisone|gabapentin|hydrochlorothiazide|losartan|albuterol|furosemide|pantoprazole|sertraline|prescription|diagnosis)\b/i;
 
+// Values in `data` are ids (UUIDs) or short codes such as `dose_reminder`. No spaces, so a
+// medication name with a dose ("Metformin 500 mg") or any sentence cannot pass.
+const NOTIFICATION_DATA_VALUE_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
+
 export function assertSafeNotificationPayload(payload: {
   title: string;
   body: string;
@@ -109,8 +113,10 @@ export function assertSafeNotificationPayload(payload: {
           `Notification data key "${key}" is not allowed; pass only opaque identifiers`,
         );
       }
-      if (typeof value !== 'string' || !value.trim() || value.length > 128) {
-        throw new Error(`Notification data value for "${key}" must be a non-empty string`);
+      if (typeof value !== 'string' || !NOTIFICATION_DATA_VALUE_REGEX.test(value)) {
+        throw new Error(
+          `Notification data value for "${key}" must be an id or code (letters, digits, - and _)`,
+        );
       }
       if (HEALTH_DETAIL_TEXT_REGEX.test(value)) {
         throw new Error(`Notification data value for "${key}" must not contain health details`);

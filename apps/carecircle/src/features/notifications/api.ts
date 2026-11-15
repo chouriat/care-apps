@@ -27,6 +27,26 @@ import { getSupabaseClient } from '../auth/api';
 
 export const DEFAULT_REMINDER_CHANNEL_ID = 'carecircle-reminders';
 
+// Sign-out waits for the push token row to be deleted. On a slow network that request can
+// hang for a long time, so give up after this long and sign out anyway.
+export const SIGN_OUT_TOKEN_CLEANUP_TIMEOUT_MS = 5000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Timed out')), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
+
 const EXPO_PUSH_TOKEN_FORMAT = /^(?:ExponentPushToken|ExpoPushToken)\[[A-Za-z0-9_-]+\]$/;
 
 export interface ExpoNotificationsModuleLike {
@@ -80,11 +100,9 @@ export function resolveEasProjectId(
   if (fromExpoExtra) {
     return fromExpoExtra;
   }
-  const envObj =
-    typeof process !== 'undefined' && process.env
-      ? (process.env as Record<string, string | undefined>)
-      : {};
-  const fromEnv = envObj.EXPO_PUBLIC_EAS_PROJECT_ID?.trim();
+  // Written out in full on purpose: Expo copies an EXPO_PUBLIC_ variable into a release build
+  // only where the code says `process.env.EXPO_PUBLIC_NAME` literally (see PR #16).
+  const fromEnv = process.env.EXPO_PUBLIC_EAS_PROJECT_ID?.trim();
   return fromEnv || undefined;
 }
 
@@ -221,6 +239,7 @@ export function createPushNotificationsController(options?: {
   projectId?: string;
   channelId?: string;
   channelName?: string;
+  cleanupTimeoutMs?: number;
 }): PushNotificationsController {
   const notifications =
     options?.notifications ?? (Notifications as unknown as ExpoNotificationsModuleLike);
@@ -229,6 +248,7 @@ export function createPushNotificationsController(options?: {
   const platform = options?.platform ?? Platform.OS;
   const channelId = options?.channelId ?? DEFAULT_REMINDER_CHANNEL_ID;
   const channelName = options?.channelName ?? en.notifications.channelName;
+  const cleanupTimeoutMs = options?.cleanupTimeoutMs ?? SIGN_OUT_TOKEN_CLEANUP_TIMEOUT_MS;
 
   let sessionGeneration = 0;
   let isAuthenticatedSession = false;
@@ -256,6 +276,9 @@ export function createPushNotificationsController(options?: {
       return;
     }
     const trimmed = rawExpoToken.trim();
+    // Remember this phone's token before registering: if registration fails (offline) a row from
+    // an earlier launch may still exist, and sign-out must still delete it.
+    currentToken = trimmed;
     const registered = await registerPushToken(getStore(), {
       token: trimmed,
       platform: platform as PushPlatform,
@@ -292,6 +315,20 @@ export function createPushNotificationsController(options?: {
     } catch {
       // Offline or transient failure during background token rotation; next launch/rotation retries.
     }
+  };
+
+  const lookUpTokenWithoutPrompt = async (): Promise<string | null> => {
+    if (platform !== 'ios' && platform !== 'android') {
+      return null;
+    }
+    const perms = await notifications.getPermissionsAsync();
+    if (!(perms.granted === true || perms.status === 'granted')) {
+      return null;
+    }
+    const projectId = resolveProjectId();
+    const result = await notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
+    const token = result.data.trim();
+    return EXPO_PUSH_TOKEN_FORMAT.test(token) ? token : null;
   };
 
   return {
@@ -378,16 +415,21 @@ export function createPushNotificationsController(options?: {
       promptedInSession = false;
       clearSubscription();
 
-      const tokenToDelete = currentToken;
+      let tokenToDelete = currentToken;
       currentToken = null;
-      if (!tokenToDelete) {
-        return;
-      }
 
       try {
-        await deleteToken(tokenToDelete);
+        if (!tokenToDelete) {
+          // The token was not fetched this launch (for example the app started offline). A row
+          // from an earlier launch may still exist, so look the token up without prompting.
+          tokenToDelete = await withTimeout(lookUpTokenWithoutPrompt(), cleanupTimeoutMs);
+        }
+        if (tokenToDelete) {
+          await withTimeout(deleteToken(tokenToDelete), cleanupTimeoutMs);
+        }
       } catch {
-        // Offline or network failure: sign out anyway; the next user's register_push_token moves the token.
+        // Offline, slow network or timeout: sign out anyway; the next user's register_push_token
+        // moves the token.
       }
     },
   };

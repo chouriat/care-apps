@@ -184,6 +184,18 @@ describe('F-6 Notifications helper (@carecircle/core)', () => {
         data: { medicationName: 'Metformin' },
       }),
     ).rejects.toThrow(/not allowed/i);
+
+    // Allowed keys still carry only ids or codes, never a name with a dose.
+    await expect(
+      scheduleLocalReminder(adapter, {
+        date: '2026-03-08',
+        time: '08:00',
+        timeZone: 'America/New_York',
+        title: 'Time for a dose',
+        body: 'Open CareCircle to view and log this dose.',
+        data: { type: 'Eliquis for Mum' },
+      }),
+    ).rejects.toThrow(/id or code/i);
   });
 
   it('validates and registers Expo push tokens into push_tokens', async () => {

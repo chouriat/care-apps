@@ -373,4 +373,89 @@ describe('F-6b Notifications in the app (apps/carecircle)', () => {
       }),
     ).rejects.toThrow(/not allowed/i);
   });
+  it('still deletes the token at sign-out when registration failed, or when the token was not fetched this launch', async () => {
+    // Registration fails (offline): a row from an earlier launch may exist, so sign-out deletes anyway.
+    const mockA = createMockNotificationsModule({
+      async getPermissionsAsync() {
+        return { status: 'granted', granted: true };
+      },
+    });
+    const deletedA: string[] = [];
+    const controllerA = createPushNotificationsController({
+      notifications: mockA.module,
+      platform: 'ios',
+      projectId: 'eas-project-uuid-1234',
+      store: {
+        async registerPushToken() {
+          return { error: { message: 'Network request failed' } };
+        },
+      },
+      deleteToken: async (token) => {
+        deletedA.push(token);
+        return { error: null };
+      },
+    });
+    await controllerA.syncAuthStatus('authenticated');
+    await controllerA.unregisterBeforeSignOut();
+    expect(deletedA).toEqual(['ExponentPushToken[initial_phone_token_123]']);
+
+    // The app started offline, so the token was never fetched; sign-out looks it up (no prompt).
+    let tokenFetchFails = true;
+    const mockB = createMockNotificationsModule({
+      async getPermissionsAsync() {
+        return { status: 'granted', granted: true };
+      },
+      async requestPermissionsAsync() {
+        throw new Error('must not prompt at sign-out');
+      },
+      async getExpoPushTokenAsync() {
+        if (tokenFetchFails) throw new Error('Network request failed');
+        return { type: 'expo', data: 'ExponentPushToken[phone_b]' };
+      },
+    });
+    const deletedB: string[] = [];
+    const controllerB = createPushNotificationsController({
+      notifications: mockB.module,
+      platform: 'android',
+      projectId: 'eas-project-uuid-1234',
+      store: {
+        async registerPushToken() {
+          return { error: null };
+        },
+      },
+      deleteToken: async (token) => {
+        deletedB.push(token);
+        return { error: null };
+      },
+    });
+    await controllerB.syncAuthStatus('authenticated');
+    expect(controllerB.getCurrentToken()).toBeNull();
+    tokenFetchFails = false;
+    await controllerB.unregisterBeforeSignOut();
+    expect(deletedB).toEqual(['ExponentPushToken[phone_b]']);
+  });
+
+  it('gives up on a hanging token delete so sign-out is never stuck', async () => {
+    const mock = createMockNotificationsModule({
+      async getPermissionsAsync() {
+        return { status: 'granted', granted: true };
+      },
+    });
+    const controller = createPushNotificationsController({
+      notifications: mock.module,
+      platform: 'ios',
+      projectId: 'eas-project-uuid-1234',
+      cleanupTimeoutMs: 50,
+      store: {
+        async registerPushToken() {
+          return { error: null };
+        },
+      },
+      deleteToken: () => new Promise(() => undefined),
+    });
+    await controller.syncAuthStatus('authenticated');
+    const started = Date.now();
+    await controller.unregisterBeforeSignOut();
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
 });

@@ -92,6 +92,12 @@ Deno.test('send-push validates payload and deduplicates userIds before sending',
       body: 'Open CareCircle to check the care plan.',
       data: { medicationName: 'Metformin' },
     },
+    {
+      userIds: [USER_1],
+      title: 'A dose was missed',
+      body: 'Open CareCircle to check the care plan.',
+      data: { type: 'Eliquis for Mum' },
+    },
   ]) {
     const unsafeRes = await invokeSendPush({}, { body: unsafeBody });
     assert(
