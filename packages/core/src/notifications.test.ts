@@ -129,8 +129,8 @@ describe('F-6 Notifications helper (@carecircle/core)', () => {
       date: '2026-03-08',
       time: '02:30',
       timeZone: 'America/New_York',
-      title: 'Metformin 500 mg',
-      body: '1 tablet due now',
+      title: 'Time for a dose',
+      body: 'Open CareCircle to view and log this dose.',
       data: { doseEventId: 'dose-123' },
     });
 
@@ -138,8 +138,8 @@ describe('F-6 Notifications helper (@carecircle/core)', () => {
     expect(result.adjustedLocalTime).toBe('03:00');
     expect(result.triggerAtIso).toBe('2026-03-08T07:00:00.000Z');
     expect(scheduled).toHaveLength(1);
-    expect(scheduled[0]?.title).toBe('Metformin 500 mg');
-    expect(scheduled[0]?.body).toBe('1 tablet due now');
+    expect(scheduled[0]?.title).toBe('Time for a dose');
+    expect(scheduled[0]?.body).toBe('Open CareCircle to view and log this dose.');
     expect(scheduled[0]?.identifier).toBe('dose-123');
     expect(scheduled[0]?.data).toEqual({ doseEventId: 'dose-123' });
     expect(scheduled[0]?.triggerDate.toISOString()).toBe('2026-03-08T07:00:00.000Z');
@@ -150,7 +150,17 @@ describe('F-6 Notifications helper (@carecircle/core)', () => {
         time: '08:00',
         timeZone: 'America/New_York',
         title: '   ',
-        body: '1 tablet due now',
+        body: 'Open CareCircle to view and log this dose.',
+      }),
+    ).rejects.toThrow(/title and body/i);
+
+    await expect(
+      scheduleLocalReminder(adapter, {
+        date: '2026-03-08',
+        time: '08:00',
+        timeZone: 'America/New_York',
+        title: 'Time for a dose',
+        body: '   ',
       }),
     ).rejects.toThrow(/title and body/i);
 
@@ -160,9 +170,20 @@ describe('F-6 Notifications helper (@carecircle/core)', () => {
         time: '08:00',
         timeZone: 'America/New_York',
         title: 'Metformin 500 mg',
-        body: '   ',
+        body: 'Open CareCircle to view and log this dose.',
       }),
-    ).rejects.toThrow(/title and body/i);
+    ).rejects.toThrow(/neutral/i);
+
+    await expect(
+      scheduleLocalReminder(adapter, {
+        date: '2026-03-08',
+        time: '08:00',
+        timeZone: 'America/New_York',
+        title: 'Time for a dose',
+        body: 'Open CareCircle to view and log this dose.',
+        data: { medicationName: 'Metformin' },
+      }),
+    ).rejects.toThrow(/not allowed/i);
   });
 
   it('validates and registers Expo push tokens into push_tokens', async () => {

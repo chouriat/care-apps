@@ -83,6 +83,23 @@ Deno.test('send-push validates payload and deduplicates userIds before sending',
     'non-UUID userIds must return 400 INPUT_INVALID',
   );
 
+  for (const unsafeBody of [
+    { userIds: [USER_1], title: 'Metformin 500 mg', body: 'Time for a dose' },
+    { userIds: [USER_1], title: 'A dose was missed', body: 'Take 1 tablet of Lisinopril' },
+    {
+      userIds: [USER_1],
+      title: 'A dose was missed',
+      body: 'Open CareCircle to check the care plan.',
+      data: { medicationName: 'Metformin' },
+    },
+  ]) {
+    const unsafeRes = await invokeSendPush({}, { body: unsafeBody });
+    assert(
+      unsafeRes.status === 400 && unsafeRes.json.error?.code === 'INPUT_INVALID',
+      `health details in push payload must return 400 INPUT_INVALID, got ${unsafeRes.status}`,
+    );
+  }
+
   let queriedUserIds: string[] = [];
   let sentBatch: Array<Record<string, unknown>> = [];
   const prunedList: string[] = [];
@@ -115,8 +132,8 @@ Deno.test('send-push validates payload and deduplicates userIds before sending',
     {
       body: {
         userIds: [USER_1, USER_2, USER_1],
-        title: 'Missed Dose Alert',
-        body: 'Metformin 500 mg is overdue.',
+        title: 'A dose was missed',
+        body: 'Open CareCircle to check the care plan.',
         data: { type: 'missed_dose' },
       },
     },
@@ -129,8 +146,8 @@ Deno.test('send-push validates payload and deduplicates userIds before sending',
   assert(
     sentBatch.length === 2 &&
       sentBatch[0]?.to === 'ExponentPushToken[token-1]' &&
-      sentBatch[0]?.title === 'Missed Dose Alert' &&
-      sentBatch[0]?.body === 'Metformin 500 mg is overdue.' &&
+      sentBatch[0]?.title === 'A dose was missed' &&
+      sentBatch[0]?.body === 'Open CareCircle to check the care plan.' &&
       sentBatch[0]?.sound === 'default' &&
       (sentBatch[0]?.data as Record<string, unknown> | undefined)?.type === 'missed_dose' &&
       sentBatch[1]?.to === 'ExponentPushToken[token-2]',

@@ -16,6 +16,7 @@ import {
 import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
+import { getAppPushNotificationsController } from '../notifications/api';
 
 export const APP_AUTH_REDIRECT_URL = 'carecircle://auth/callback';
 
@@ -153,6 +154,7 @@ export function getAppAuthController(): AuthController {
     },
 
     async signOut() {
+      await getAppPushNotificationsController().unregisterBeforeSignOut();
       const { error } = await supabase.auth.signOut();
       return {
         error: toAdapterError(error),
@@ -167,6 +169,10 @@ export function getAppAuthController(): AuthController {
   });
 
   cachedController = controller;
+
+  controller.subscribe((nextState) => {
+    void getAppPushNotificationsController().syncAuthStatus(nextState.status);
+  });
 
   supabase.auth.onAuthStateChange((event, session) => {
     if ((event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') && session) {
