@@ -4,22 +4,111 @@ import { PROMPTS } from './prompts.ts';
 export type AiTaskName = 'carecircle.extractPrescription' | 'carecircle.summarizeVisit';
 export type AiProviderName = 'fake' | 'anthropic' | 'gemini';
 
-export const rxSchema = z.object({
-  name: z.string().min(1),
-  strength: z.string().nullable(),
-  doseText: z.string().min(1),
-  schedule: z.object({ kind: z.string().min(1) }).passthrough(),
-  instructions: z.string().nullable(),
-  fieldConfidence: z.record(z.number().min(0).max(1)),
-  rawText: z.string(),
-});
+const time24hSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Time must be in 24-hour HH:MM format');
 
-export const visitSchema = z.object({
-  summary: z.string().min(1),
-  followUps: z.array(z.object({ title: z.string().min(1) }).passthrough()),
-  medChanges: z.array(z.object({ action: z.enum(['start', 'stop', 'change_dose']) }).passthrough()),
-  questionsToAsk: z.array(z.string()),
-});
+const weekdaySchema = z.enum(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']);
+
+const scheduleSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('daily'),
+      times: z.array(time24hSchema).min(1),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('weekly'),
+      days: z.array(weekdaySchema).min(1),
+      times: z.array(time24hSchema).min(1),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('every_n_days'),
+      n: z.number().int().positive(),
+      times: z.array(time24hSchema).min(1),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('as_needed'),
+    })
+    .strict(),
+]);
+
+const confidenceScoreSchema = z.number().min(0).max(1);
+
+const fieldConfidenceSchema = z
+  .object({
+    name: confidenceScoreSchema.optional(),
+    strength: confidenceScoreSchema.optional(),
+    doseText: confidenceScoreSchema.optional(),
+    schedule: confidenceScoreSchema.optional(),
+    instructions: confidenceScoreSchema.optional(),
+  })
+  .strict();
+
+export const rxSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    strength: z.string().trim().min(1).nullable(),
+    doseText: z.string().trim().min(1),
+    schedule: scheduleSchema,
+    instructions: z.string().trim().min(1).nullable(),
+    fieldConfidence: fieldConfidenceSchema,
+    rawText: z.string(),
+  })
+  .strict();
+
+const isoDateSchema = z
+  .string()
+  .regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, 'Date must be in YYYY-MM-DD format');
+
+const followUpItemSchema = z
+  .object({
+    title: z.string().trim().min(1),
+    dueHint: z.string().trim().min(1).nullable(),
+    dueDate: isoDateSchema.nullable(),
+  })
+  .strict();
+
+const medChangeItemSchema = z.discriminatedUnion('action', [
+  z
+    .object({
+      action: z.literal('start'),
+      medicationId: z.null(),
+      name: z.string().trim().min(1),
+      detail: z.string().trim().min(1).nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('stop'),
+      medicationId: z.string().uuid(),
+      name: z.string().trim().min(1),
+      detail: z.string().trim().min(1).nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('change_dose'),
+      medicationId: z.string().uuid(),
+      name: z.string().trim().min(1),
+      detail: z.string().trim().min(1).nullable(),
+    })
+    .strict(),
+]);
+
+export const visitSchema = z
+  .object({
+    summary: z.string().trim().min(1),
+    followUps: z.array(followUpItemSchema),
+    medChanges: z.array(medChangeItemSchema),
+    questionsToAsk: z.array(z.string().trim().min(1)),
+  })
+  .strict();
 
 // Sent to the providers' JSON modes. Keep to keywords both accept: Anthropic's
 // structured outputs reject minLength/minimum and similar over raw HTTP (only its
@@ -80,7 +169,7 @@ export const visitJsonSchema: Record<string, unknown> = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['title'],
+        required: ['title', 'dueHint', 'dueDate'],
         properties: {
           title: { type: 'string' },
           dueHint: nullableString,
@@ -93,7 +182,7 @@ export const visitJsonSchema: Record<string, unknown> = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['action', 'name'],
+        required: ['action', 'medicationId', 'name', 'detail'],
         properties: {
           action: { type: 'string', enum: ['start', 'stop', 'change_dose'] },
           medicationId: nullableString,
@@ -200,8 +289,15 @@ export const FAKE_FIXTURES: Record<AiTaskName, unknown> = {
   },
   [visitTask]: {
     summary: 'Blood pressure is stable. Book a blood test in two weeks and stop Aspirin.',
-    followUps: [{ title: 'Book blood test' }],
-    medChanges: [{ action: 'stop', name: 'Aspirin' }],
+    followUps: [{ title: 'Book blood test', dueHint: 'in 2 weeks', dueDate: '2026-11-23' }],
+    medChanges: [
+      {
+        action: 'stop',
+        medicationId: 'c1200001-0000-4000-8000-000000000001',
+        name: 'Aspirin',
+        detail: 'Stop until next visit',
+      },
+    ],
     questionsToAsk: ['Should blood pressure be logged twice daily?'],
   },
 };
