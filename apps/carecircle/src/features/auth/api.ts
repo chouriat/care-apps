@@ -59,6 +59,16 @@ function resolveSupabaseConfig(): { url: string; anonKey: string } {
       : {};
   const url = envObj.EXPO_PUBLIC_SUPABASE_URL?.trim() || defaultLocalUrl;
   const anonKey = envObj.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim() || 'public-anon-key-placeholder';
+  if (!envObj.EXPO_PUBLIC_SUPABASE_URL || !envObj.EXPO_PUBLIC_SUPABASE_ANON_KEY) {
+    // Without these, sign-in talks to a local Supabase that is usually not running, and the
+    // sign-in screen shows "You are offline". Say why in the dev console.
+    console.warn(
+      'CareCircle: EXPO_PUBLIC_SUPABASE_URL or EXPO_PUBLIC_SUPABASE_ANON_KEY is not set in ' +
+        'apps/carecircle/.env, so sign-in uses the local Supabase at ' +
+        defaultLocalUrl +
+        '. Set both, then restart expo start.',
+    );
+  }
   return { url, anonKey };
 }
 

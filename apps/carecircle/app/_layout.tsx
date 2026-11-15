@@ -1,8 +1,21 @@
-import { ThemeProvider } from '@carecircle/ui';
+import { ThemeProvider, useTheme } from '@carecircle/ui';
 import { Stack, usePathname, useRouter } from 'expo-router';
-import { useCallback } from 'react';
+import { useCallback, type ReactNode } from 'react';
+import { StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { AuthGate } from '../src/features/auth/components';
 import { useAuthController } from '../src/features/auth/hooks';
+
+// Keeps every screen clear of the status bar, camera cutout, rounded corners and home
+// indicator. Expo Router already wraps the app in a SafeAreaProvider.
+function SafeAreaFrame({ children }: { children: ReactNode }) {
+  const { colors } = useTheme();
+  return (
+    <SafeAreaView style={[styles.frame, { backgroundColor: colors.background }]}>
+      {children}
+    </SafeAreaView>
+  );
+}
 
 export default function RootLayout() {
   const pathname = usePathname();
@@ -18,9 +31,17 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider>
-      <AuthGate status={state.status} pathname={pathname} onRedirect={handleRedirect}>
-        <Stack screenOptions={{ headerShown: false }} />
-      </AuthGate>
+      <SafeAreaFrame>
+        <AuthGate status={state.status} pathname={pathname} onRedirect={handleRedirect}>
+          <Stack screenOptions={{ headerShown: false }} />
+        </AuthGate>
+      </SafeAreaFrame>
     </ThemeProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  frame: {
+    flex: 1,
+  },
+});
