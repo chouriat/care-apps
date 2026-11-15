@@ -266,13 +266,21 @@ const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const JWT_PATTERN = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
 const BEARER_PATTERN = /Bearer\s+[A-Za-z0-9._~+/-]+=*/gi;
 const EXPO_TOKEN_PATTERN = /(?:ExponentPushToken|ExpoPushToken)\[[^\]]+\]/g;
+// Sign-in links and auth errors carry one-time codes and tokens in the URL
+// (`carecircle://auth/callback?code=...`, `/verify?token_hash=...`, `#access_token=...`).
+const SECRET_PARAM_PATTERN =
+  /\b(code|token|token_hash|access_token|refresh_token|provider_token|apikey|api_key|key)=[^&#\s"']+/gi;
+// Supabase API keys in the new format.
+const SUPABASE_KEY_PATTERN = /\bsb_(?:secret|publishable)_[A-Za-z0-9_-]+/g;
 
 export function scrubSensitiveText(input: string): string {
   return input
     .replace(EMAIL_PATTERN, '[REDACTED_EMAIL]')
     .replace(JWT_PATTERN, '[REDACTED_TOKEN]')
     .replace(BEARER_PATTERN, 'Bearer [REDACTED_TOKEN]')
-    .replace(EXPO_TOKEN_PATTERN, '[REDACTED_PUSH_TOKEN]');
+    .replace(EXPO_TOKEN_PATTERN, '[REDACTED_PUSH_TOKEN]')
+    .replace(SECRET_PARAM_PATTERN, '$1=[REDACTED]')
+    .replace(SUPABASE_KEY_PATTERN, '[REDACTED_KEY]');
 }
 
 function validateCrashTags(rawTags?: Record<string, unknown>): SentryScopeContext | undefined {

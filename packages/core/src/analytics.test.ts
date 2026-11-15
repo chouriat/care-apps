@@ -232,4 +232,25 @@ describe('F-7 Analytics & Crash Reporting (@carecircle/core/analytics)', () => {
 
     expect(scrubSensitiveText('Contact bob@care.org')).toBe('Contact [REDACTED_EMAIL]');
   });
+  it('scrubs one-time codes and tokens from sign-in links, and Supabase keys', () => {
+    const cases: Array<[string, string]> = [
+      [
+        'Auth failed for carecircle://auth/callback?code=9f8e7d6c-5b4a&state=x',
+        'Auth failed for carecircle://auth/callback?code=[REDACTED]&state=x',
+      ],
+      [
+        'GET https://x.supabase.co/auth/v1/verify?token_hash=pkce_abc123&type=magiclink',
+        'GET https://x.supabase.co/auth/v1/verify?token_hash=[REDACTED]&type=magiclink',
+      ],
+      [
+        'carecircle://auth/callback#access_token=abc&refresh_token=v1.Mr5mfs&expires_in=3600',
+        'carecircle://auth/callback#access_token=[REDACTED]&refresh_token=[REDACTED]&expires_in=3600',
+      ],
+      ['apikey sb_secret_AbCd_123 leaked', 'apikey [REDACTED_KEY] leaked'],
+      ['?apikey=sb_publishable_xyz', '?apikey=[REDACTED]'],
+    ];
+    for (const [input, expected] of cases) {
+      expect(scrubSensitiveText(input)).toBe(expected);
+    }
+  });
 });
