@@ -22,6 +22,7 @@ import {
   type NativeEventSubscription,
 } from 'react-native';
 import { getAppPushNotificationsController } from '../notifications/api';
+import { getAppObservability } from '../observability/api';
 
 export const APP_AUTH_REDIRECT_URL = 'carecircle://auth/callback';
 
@@ -225,6 +226,7 @@ export function getAppAuthController(): AuthController {
 
   controller.subscribe((nextState) => {
     void getAppPushNotificationsController().syncAuthStatus(nextState.status);
+    getAppObservability().syncAuthState(nextState);
   });
 
   supabase.auth.onAuthStateChange((event, session) => {
