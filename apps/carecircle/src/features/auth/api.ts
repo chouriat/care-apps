@@ -56,10 +56,19 @@ export function handleAuthCallbackOnce(url: string): Promise<boolean> {
   return pending;
 }
 
+// Expo copies EXPO_PUBLIC_ variables into a release build only where the code spells out
+// `process.env.EXPO_PUBLIC_...` in full. Reading them through another object works in
+// development (Metro serves the whole env) but is empty in every release and preview build.
+// https://docs.expo.dev/guides/environment-variables/ (checked 2026-11-15)
+function readSupabaseEnv(): Record<string, string | undefined> {
+  return {
+    EXPO_PUBLIC_SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL,
+    EXPO_PUBLIC_SUPABASE_ANON_KEY: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+  };
+}
+
 export function resolveSupabaseConfig(
-  env: Record<string, string | undefined> = typeof process !== 'undefined' && process.env
-    ? (process.env as Record<string, string | undefined>)
-    : {},
+  env: Record<string, string | undefined> = readSupabaseEnv(),
   isDev: boolean = (globalThis as { __DEV__?: boolean }).__DEV__ !== false,
 ): { url: string; anonKey: string } {
   const defaultLocalUrl =

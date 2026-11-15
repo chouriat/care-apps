@@ -7,13 +7,15 @@ import {
 } from './features/auth/api';
 
 describe('F-8 EAS profiles and Supabase client configuration (apps/carecircle)', () => {
-  const originalEnv = process.env;
+  // Change process.env in place: Expo's Babel plugin rewrites process.env.EXPO_PUBLIC_* to an
+  // env object that keeps pointing at the original process.env.
+  const originalUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  const originalKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
   const globalDevRef = globalThis as { __DEV__?: boolean };
   const originalDev = globalDevRef.__DEV__;
 
   beforeEach(() => {
     resetSupabaseClientForTests();
-    process.env = { ...originalEnv };
     delete process.env.EXPO_PUBLIC_SUPABASE_URL;
     delete process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
     globalDevRef.__DEV__ = true;
@@ -21,7 +23,10 @@ describe('F-8 EAS profiles and Supabase client configuration (apps/carecircle)',
 
   afterEach(() => {
     resetSupabaseClientForTests();
-    process.env = originalEnv;
+    process.env.EXPO_PUBLIC_SUPABASE_URL = originalUrl;
+    process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = originalKey;
+    if (originalUrl === undefined) delete process.env.EXPO_PUBLIC_SUPABASE_URL;
+    if (originalKey === undefined) delete process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
     globalDevRef.__DEV__ = originalDev;
     jest.restoreAllMocks();
   });
@@ -98,5 +103,20 @@ describe('F-8 EAS profiles and Supabase client configuration (apps/carecircle)',
 
     capturedListener?.('inactive');
     expect(stopSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads the Supabase variables in the literal form that Expo copies into release builds', () => {
+    // Found by the Maestro CI run: reading process.env through another object compiled to
+    // undefined in the release APK, so the app crashed on launch.
+    const fs = jest.requireActual<{ readFileSync(path: string, encoding: 'utf8'): string }>('fs');
+    const { testPath = '' } = expect.getState();
+    const source = fs.readFileSync(
+      testPath.replace(/eas-auth\.test\.ts$/, 'features/auth/api.ts'),
+      'utf8',
+    );
+    expect(source).toContain('process.env.EXPO_PUBLIC_SUPABASE_URL');
+    expect(source).toContain('process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY');
+    expect(source).not.toMatch(/=\s*process\.env\s*[;,)]/);
+    expect(source).not.toMatch(/as Record<string, string \| undefined>\)\s*:/);
   });
 });
