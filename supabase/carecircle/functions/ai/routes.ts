@@ -1,4 +1,5 @@
 import { z } from 'npm:zod@3.24.1';
+import { PROMPTS } from './prompts.ts';
 
 export type AiTaskName = 'carecircle.extractPrescription' | 'carecircle.summarizeVisit';
 export type AiProviderName = 'fake' | 'anthropic' | 'gemini';
@@ -20,6 +21,89 @@ export const visitSchema = z.object({
   questionsToAsk: z.array(z.string()),
 });
 
+export const rxJsonSchema: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'name',
+    'strength',
+    'doseText',
+    'schedule',
+    'instructions',
+    'fieldConfidence',
+    'rawText',
+  ],
+  properties: {
+    name: { type: 'string', minLength: 1 },
+    strength: { type: ['string', 'null'] },
+    doseText: { type: 'string', minLength: 1 },
+    schedule: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['kind'],
+      properties: {
+        kind: { type: 'string', enum: ['daily', 'weekly', 'every_n_days', 'as_needed'] },
+        times: { type: 'array', items: { type: 'string' } },
+        days: { type: 'array', items: { type: 'string' } },
+        n: { type: 'integer' },
+      },
+    },
+    instructions: { type: ['string', 'null'] },
+    fieldConfidence: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        name: { type: 'number' },
+        strength: { type: 'number' },
+        doseText: { type: 'number' },
+        schedule: { type: 'number' },
+        instructions: { type: 'number' },
+      },
+    },
+    rawText: { type: 'string' },
+  },
+};
+
+export const visitJsonSchema: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['summary', 'followUps', 'medChanges', 'questionsToAsk'],
+  properties: {
+    summary: { type: 'string', minLength: 1 },
+    followUps: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['title'],
+        properties: {
+          title: { type: 'string', minLength: 1 },
+          dueHint: { type: ['string', 'null'] },
+          dueDate: { type: ['string', 'null'] },
+        },
+      },
+    },
+    medChanges: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['action', 'name'],
+        properties: {
+          action: { type: 'string', enum: ['start', 'stop', 'change_dose'] },
+          medicationId: { type: ['string', 'null'] },
+          name: { type: 'string', minLength: 1 },
+          detail: { type: ['string', 'null'] },
+        },
+      },
+    },
+    questionsToAsk: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+  },
+};
+
 export type AiRouteConfig = {
   task: AiTaskName;
   provider: AiProviderName;
@@ -27,6 +111,7 @@ export type AiRouteConfig = {
   promptFile: string;
   promptVersion: string;
   schema: z.ZodTypeAny;
+  jsonSchema: Record<string, unknown>;
   timeoutMs: number;
   inputMicrocentsPer1k: number;
   outputMicrocentsPer1k: number;
@@ -48,9 +133,10 @@ export const routes: Record<AiTaskName, AiRouteConfig> = {
     task: rxTask,
     provider: 'gemini',
     model: 'gemini/gemini-3.5-flash-lite',
-    promptFile: 'packages/ai-gateway/prompts/carecircle/extractPrescription.md',
-    promptVersion: 'v1',
+    promptFile: PROMPTS[rxTask].promptFile,
+    promptVersion: PROMPTS[rxTask].version,
     schema: rxSchema,
+    jsonSchema: rxJsonSchema,
     timeoutMs: 25_000,
     inputMicrocentsPer1k: 30_000,
     outputMicrocentsPer1k: 250_000,
@@ -60,9 +146,10 @@ export const routes: Record<AiTaskName, AiRouteConfig> = {
     task: visitTask,
     provider: 'anthropic',
     model: 'anthropic/claude-sonnet-5-5',
-    promptFile: 'packages/ai-gateway/prompts/carecircle/summarizeVisit.md',
-    promptVersion: 'v1',
+    promptFile: PROMPTS[visitTask].promptFile,
+    promptVersion: PROMPTS[visitTask].version,
     schema: visitSchema,
+    jsonSchema: visitJsonSchema,
     timeoutMs: 25_000,
     inputMicrocentsPer1k: 200_000,
     outputMicrocentsPer1k: 1_000_000,

@@ -1,4 +1,5 @@
 import { z } from 'npm:zod@3.24.1';
+import { PROMPTS } from './prompts.ts';
 import {
   estimateCostMicrocents,
   fakeProvider,
@@ -62,6 +63,21 @@ const stripModelPrefix = (model: string): string => {
   return slashIndex >= 0 ? model.slice(slashIndex + 1) : model;
 };
 
+function formatUserDataMessage(input: Record<string, unknown>): string {
+  return `<user_input_data>\n${JSON.stringify(input)}\n</user_input_data>`;
+}
+
+class ProviderHttpError extends Error {
+  readonly status: number;
+  readonly retryable: boolean;
+
+  constructor(provider: AiProviderName, status: number) {
+    super(`${provider} HTTP ${status}`);
+    this.status = status;
+    this.retryable = status === 429 || status >= 500;
+  }
+}
+
 function parseJsonText(rawText: string): unknown {
   const trimmed = rawText.trim();
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
@@ -80,6 +96,7 @@ function createAnthropicProvider(
     generate: async (req) => {
       const apiKey = getEnv('ANTHROPIC_API_KEY');
       if (!apiKey) throw new Error('Missing ANTHROPIC_API_KEY');
+      const compiledPrompt = PROMPTS[req.task];
       const res = await fetchImpl('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -91,16 +108,26 @@ function createAnthropicProvider(
           model: stripModelPrefix(req.model),
           // Room for adaptive thinking plus the JSON answer; thinking tokens count here.
           max_tokens: 4096,
+          system: compiledPrompt.systemPrompt,
           messages: [
             {
               role: 'user',
-              content: `Task: ${req.task}\nReturn JSON only.\nInput: ${JSON.stringify(req.input)}`,
+              content: formatUserDataMessage(req.input),
             },
           ],
+          output_config: {
+            format: {
+              type: 'json_schema',
+              schema: req.jsonSchema,
+            },
+          },
         }),
         signal: req.signal,
       });
-      if (!res.ok) throw new Error(`Anthropic HTTP ${res.status}`);
+      if (!res.ok) {
+        console.warn('ai_provider_http_error', { status: res.status });
+        throw new ProviderHttpError('anthropic', res.status);
+      }
       const data = (await res.json()) as {
         content?: Array<{ type?: string; text?: string }>;
         usage?: { input_tokens?: number; output_tokens?: number };
@@ -123,6 +150,7 @@ function createGeminiProvider(
     generate: async (req) => {
       const apiKey = getEnv('GEMINI_API_KEY');
       if (!apiKey) throw new Error('Missing GEMINI_API_KEY');
+      const compiledPrompt = PROMPTS[req.task];
       const modelId = stripModelPrefix(req.model);
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`;
       const res = await fetchImpl(url, {
@@ -132,21 +160,30 @@ function createGeminiProvider(
           'x-goog-api-key': apiKey,
         },
         body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: compiledPrompt.systemPrompt }],
+          },
           contents: [
             {
               role: 'user',
               parts: [
                 {
-                  text: `Task: ${req.task}\nReturn JSON only.\nInput: ${JSON.stringify(req.input)}`,
+                  text: formatUserDataMessage(req.input),
                 },
               ],
             },
           ],
-          generationConfig: { responseMimeType: 'application/json' },
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseJsonSchema: req.jsonSchema,
+          },
         }),
         signal: req.signal,
       });
-      if (!res.ok) throw new Error(`Gemini HTTP ${res.status}`);
+      if (!res.ok) {
+        console.warn('ai_provider_http_error', { status: res.status });
+        throw new ProviderHttpError('gemini', res.status);
+      }
       const data = (await res.json()) as {
         candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
         usageMetadata?: {
@@ -314,9 +351,10 @@ export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
       }
       await record(false, 'SCHEMA_INVALID');
       return fail('SCHEMA_INVALID', 'Model output failed validation twice.', false);
-    } catch {
+    } catch (err) {
+      const retryable = err instanceof ProviderHttpError ? err.retryable : true;
       await record(false, 'PROVIDER_ERROR');
-      return fail('PROVIDER_ERROR', 'Provider call failed.', true);
+      return fail('PROVIDER_ERROR', 'Provider call failed.', retryable);
     } finally {
       clearTimeout(timer);
     }
