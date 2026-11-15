@@ -64,3 +64,10 @@ All 9 tables have Row Level Security enabled (`ENABLE ROW LEVEL SECURITY`) and d
 | `tasks` | None | `SELECT` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` |
 | `visit_notes` | None | `SELECT` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` (`created_by` set by DB default `auth.uid()`, never client-writable) | `SELECT`, `INSERT`, `UPDATE`, `DELETE` (`created_by` set by DB default `auth.uid()`) |
 | `log_entries` | None | `SELECT` | `SELECT` | `SELECT` (inserts happen only via `SECURITY DEFINER` audit triggers; `UPDATE` and `DELETE` are blocked by `log_entries_immutable` except when the parent circle is cascade-deleted) |
+
+### Added in review (PR #23)
+
+- **No moving rows between families.** `UPDATE` is granted per column and never on `id` or `circle_id` (`medications`, `dose_events`, `appointments`, `tasks`, `visit_notes`). On `circles`, only `name`, `care_recipient_name`, `care_recipient_dob` and `timezone` are updatable. `visit_notes.created_at` is set by the database.
+- **People on a row belong to that circle.** The `check_circle_people` trigger refuses an `acted_by`, `done_by`, `assignee` or `driver_user_id` that is not a member of the row's circle (checked only when the statement sets or changes it, so tasks of someone who left stay editable).
+- **Actions are recorded as yourself.** A signed-in user can set `acted_by` / `done_by` only to their own id. Server jobs (no signed-in user) may leave them `null`. Log entries name `auth.uid()`, or `acted_by` / `done_by` for server jobs.
+- **Account deletion.** Deleting a user whose row is `owner` fails while the circle exists (`prevent_ownerless_circle`), which matches the spec: an owner transfers or deletes the circle first.
