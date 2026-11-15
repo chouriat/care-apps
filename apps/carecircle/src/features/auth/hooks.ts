@@ -1,7 +1,7 @@
 import type { AuthProvider, AuthState } from '@carecircle/core';
 import * as Linking from 'expo-linking';
 import { useCallback, useEffect, useState } from 'react';
-import { getAppAuthController } from './api';
+import { getAppAuthController, handleAuthCallbackOnce } from './api';
 
 export function useAuthController() {
   const controller = getAppAuthController();
@@ -15,13 +15,13 @@ export function useAuthController() {
 
     void Linking.getInitialURL().then((initialUrl) => {
       if (initialUrl && initialUrl.includes('auth/callback')) {
-        void controller.handleAuthCallback(initialUrl);
+        void handleAuthCallbackOnce(initialUrl);
       }
     });
 
     const urlSubscription = Linking.addEventListener('url', ({ url }) => {
       if (url && url.includes('auth/callback')) {
-        void controller.handleAuthCallback(url);
+        void handleAuthCallbackOnce(url);
       }
     });
 
