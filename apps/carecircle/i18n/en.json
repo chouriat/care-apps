@@ -66,5 +66,14 @@
     "draftScheduleValue": "08:00, 20:00",
     "retry": "Try again",
     "chipToggle": "Evening Medication"
+  },
+  "notifications": {
+    "channelName": "Care reminders",
+    "doseReminderTitle": "Time for a dose",
+    "doseReminderBody": "Open CareCircle to view and log this dose.",
+    "missedDoseTitle": "A dose was missed",
+    "missedDoseBody": "Open CareCircle to check the care plan.",
+    "taskReminderTitle": "Care task reminder",
+    "taskReminderBody": "Open CareCircle to view your care task."
   }
 }
