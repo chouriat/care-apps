@@ -16,3 +16,19 @@ export {
   type SecureStoreAdapter,
   type SupabaseAuthAdapter,
 } from './auth';
+export {
+  computeUtcTriggerForLocalTime,
+  isValidIanaTimeZone,
+  registerPushToken,
+  scheduleLocalReminder,
+  type LocalNotificationAdapter,
+  type LocalNotificationRequest,
+  type LocalReminderInput,
+  type LocalTimeTriggerInput,
+  type LocalTimeTriggerResult,
+  type PushPlatform,
+  type PushTokenRegistrationInput,
+  type PushTokenRow,
+  type PushTokenStoreAdapter,
+  type ScheduledLocalReminder,
+} from './notifications';

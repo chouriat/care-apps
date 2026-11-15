@@ -37,7 +37,7 @@ jobs:
       # Runs after the export so the API key search also scans the exported app bundle (F-2b).
       # The live provider test skips here: CI has no ANTHROPIC_API_KEY or GEMINI_API_KEY.
       - name: Edge Function tests
-        run: deno test --node-modules-dir=none --allow-read --allow-env --allow-write --no-prompt supabase/carecircle/functions/ai/
+        run: deno test --node-modules-dir=none --allow-read --allow-env --allow-write --no-prompt supabase/carecircle/functions/
         env:
           CHECK_APP_BUNDLE: '1'
 
