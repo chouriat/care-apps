@@ -7,6 +7,26 @@
     "title": "CareCircle",
     "subtitle": "Shared family care plan shell ready."
   },
+  "auth": {
+    "title": "Welcome to CareCircle",
+    "subtitle": "Sign in to coordinate daily care with your family circle.",
+    "emailLabel": "Email address",
+    "emailPlaceholder": "caregiver@example.com",
+    "sendMagicLink": "Send magic link",
+    "sendMagicLinkA11y": "Send magic link by email",
+    "continueWithApple": "Sign in with Apple",
+    "continueWithAppleA11y": "Sign in with Apple",
+    "continueWithGoogle": "Continue with Google",
+    "continueWithGoogleA11y": "Continue with Google",
+    "loading": "Signing you in...",
+    "magicLinkSentTitle": "Check your email",
+    "magicLinkSentBody": "We sent a sign-in magic link to your email address. Tap the link on this device to continue.",
+    "errorTitle": "Unable to sign in",
+    "errorMessage": "We could not complete your sign-in request. Please verify your details and try again.",
+    "offlineTitle": "You are offline",
+    "offlineMessage": "Sign-in requires an internet connection. Reconnect and try again.",
+    "retry": "Try again"
+  },
   "tokensPreview": {
     "title": "Design Tokens",
     "schemeLight": "Active scheme: Light",
