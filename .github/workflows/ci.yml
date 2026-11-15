@@ -97,7 +97,9 @@ jobs:
       - name: Start local Supabase with Auth and Mailpit
         run: |
           WORKDIR="$(node supabase/carecircle/cli.mjs stage)"
-          supabase start --workdir "$WORKDIR" --exclude studio,imgproxy,logflare,vector,edge-runtime
+          # Sign-in needs only the database, Auth, the API gateway and Mailpit. Pulling fewer
+          # images keeps the job clear of public.ecr.aws rate limits ("Rate exceeded").
+          supabase start --workdir "$WORKDIR" --exclude studio,imgproxy,logflare,vector,edge-runtime,realtime,storage-api,postgres-meta,supavisor
           ANON_KEY="$(supabase status --workdir "$WORKDIR" -o json | node -e 'const d = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(d.ANON_KEY || d.PUBLISHABLE_KEY || "");')"
           if [ -z "$ANON_KEY" ]; then
             echo "Failed to read ANON_KEY from supabase status" >&2
