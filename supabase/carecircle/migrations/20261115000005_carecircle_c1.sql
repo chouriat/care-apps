@@ -619,6 +619,16 @@ begin
   if tg_op = 'DELETE' and not exists (select 1 from public.circles where id = old.circle_id) then
     return old;
   end if;
+  -- Deleting a user account (CC-10) clears created_by through `on delete set null`. That is the only
+  -- change allowed: the line itself stays in the family's care log.
+  if tg_op = 'UPDATE'
+    and old.created_by is not null
+    and new.created_by is null
+    and (new.id, new.circle_id, new.type, new.ref_id, new.summary, new.created_at)
+      is not distinct from (old.id, old.circle_id, old.type, old.ref_id, old.summary, old.created_at)
+    and not exists (select 1 from auth.users where id = old.created_by) then
+    return new;
+  end if;
   raise exception 'log_entries is append-only and cannot be updated or deleted'
     using errcode = '42501';
 end;

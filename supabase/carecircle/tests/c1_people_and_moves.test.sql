@@ -8,7 +8,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(22);
+select plan(26);
 
 do $$
 declare
@@ -165,6 +165,22 @@ select is(pg_temp.write_count($$update public.circles set name = 'Family A renam
 select is(pg_temp.write_count($$insert into public.visit_notes (circle_id, summary, created_at)
   values ('dac00000-0000-4000-8000-000000000001', 'Backdated', '2001-01-01T00:00:00Z')$$), -1,
   'a visit note cannot be backdated');
+
+-- 4. Account deletion (CC-10): a member's account can be deleted; the family keeps its care log.
+-- da000003 joined family A (the join line names them) and left it earlier in this file.
+select pg_temp.login(null);
+create temp table member_lines as
+  select id from public.log_entries
+   where circle_id = 'dac00000-0000-4000-8000-000000000001'
+     and created_by = 'da000003-0000-4000-8000-000000000003';
+select ok((select count(*) from member_lines) > 0, 'the care log names the member before they delete their account');
+select lives_ok($$delete from auth.users where id = 'da000003-0000-4000-8000-000000000003'$$,
+  'a member can delete their account although the care log names them');
+select is((select count(*)::int from public.log_entries l join member_lines m using (id) where l.created_by is null),
+  (select count(*)::int from member_lines),
+  'their care log lines stay, with nobody named');
+select throws_ok($$delete from auth.users where id = 'da000001-0000-4000-8000-000000000001'$$, '42501', null,
+  'an owner cannot delete their account while the circle exists (transfer or delete it first)');
 
 select * from finish();
 rollback;
