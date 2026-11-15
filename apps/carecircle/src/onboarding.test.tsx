@@ -2,7 +2,7 @@ import * as Core from '@carecircle/core';
 import * as UI from '@carecircle/ui';
 import { fireEvent, render, screen, within } from '@testing-library/react-native';
 import { StyleSheet } from 'react-native';
-import Purchases, { type PurchasesOfferings, type PurchasesPackage } from 'react-native-purchases';
+import type { PurchasesOfferings, PurchasesPackage } from 'react-native-purchases';
 import TodayScreen from '../app/(tabs)/today';
 import en from '../i18n/en.json';
 import {
@@ -193,13 +193,18 @@ describe('CC-1a Onboarding and create circle (apps/carecircle)', () => {
       },
     );
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.circle.id).toBe(mockCircleRow.id);
-      expect(result.circle.name).toBe('Smith Family');
-      expect(result.circle.careRecipientName).toBe('Evelyn Smith');
-      expect(result.circle.timezone).toBe('Europe/Paris');
-    }
+    expect(result).toEqual({
+      ok: true,
+      circle: {
+        id: mockCircleRow.id,
+        name: 'Smith Family',
+        careRecipientName: 'Evelyn Smith',
+        careRecipientDob: null,
+        timezone: 'Europe/Paris',
+        createdBy: mockCircleRow.created_by,
+        createdAt: mockCircleRow.created_at,
+      },
+    });
 
     expect(rpcCalls).toEqual([
       {
@@ -249,8 +254,8 @@ describe('CC-1a Onboarding and create circle (apps/carecircle)', () => {
   });
 
   it('renders the empty Today screen at /(tabs)/today and exports /(onboarding)/start route', async () => {
-    const onboardingRoute = jest.requireActual<{ default?: unknown }>('../app/(onboarding)/start');
-    expect(typeof onboardingRoute.default).toBe('function');
+    // The /(onboarding)/start route itself is tested in onboarding-routes.test.tsx (it needs
+    // expo-router mocked, which jest cannot load here as an ES module).
 
     await render(
       <UI.ThemeProvider>
@@ -338,7 +343,7 @@ describe('F-5 follow-up: getFamilyOffer, monthly package selection, intro trial 
     expect(selectFamilyPackage(offerings)).toBe(monthlyPkg);
 
     const offer = await getFamilyOffer();
-    expect(Purchases.getOfferings).toHaveBeenCalledTimes(1);
+    expect(mockGetOfferings).toHaveBeenCalledTimes(1);
     expect(offer).toEqual({
       priceText: '$4.99 / month',
       hasIntroOffer: true,

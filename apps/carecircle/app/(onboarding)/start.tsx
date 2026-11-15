@@ -20,12 +20,17 @@ export default function OnboardingStartRoute() {
       setErrorCode(null);
       try {
         const result = await createCircleViaRpc(values);
-        if (result.ok) {
+        // CIRCLE_LIMIT_REACHED means this account already owns a circle (for example the
+        // first tap succeeded but the answer was lost): open it instead of leaving a dead end.
+        if (result.ok || result.errorCode === 'CIRCLE_LIMIT_REACHED') {
           router.replace('/(tabs)/today' as never);
           return true;
         }
         setIsOffline(result.isOffline);
         setErrorCode(result.errorCode);
+        return false;
+      } catch {
+        setErrorCode('CREATE_CIRCLE_FAILED');
         return false;
       } finally {
         setIsLoading(false);

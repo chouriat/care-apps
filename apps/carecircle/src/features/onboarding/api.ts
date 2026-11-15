@@ -1,10 +1,4 @@
-import {
-  circleRowSchema,
-  circleSchema,
-  snakeToCamel,
-  validateAnalyticsEvent,
-  type Circle,
-} from '@carecircle/core';
+import { circleRowSchema, circleSchema, type Circle, type CircleRow } from '@carecircle/core';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { getSupabaseClient } from '../auth/api';
@@ -82,6 +76,19 @@ function isNetworkFailureMessage(message: string, code?: string): boolean {
   return /network|fetch failed|failed to fetch|offline|load failed/i.test(message);
 }
 
+// `snakeToCamel` from core converts one key string, not a whole row, so map the C1 row explicitly.
+export function circleFromRow(row: CircleRow): Circle {
+  return {
+    id: row.id,
+    name: row.name,
+    careRecipientName: row.care_recipient_name,
+    careRecipientDob: row.care_recipient_dob,
+    timezone: row.timezone,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+  };
+}
+
 export async function createCircleViaRpc(
   input: CreateCircleFormValues,
   deps: CreateCircleDeps = {},
@@ -104,9 +111,10 @@ export async function createCircleViaRpc(
   const trackCircleCreated =
     deps.trackCircleCreated ??
     (() => {
-      // Validated through `validateAnalyticsEvent`: `cc_circle_created` sends zero circle or person names.
-      const props = validateAnalyticsEvent('cc_circle_created', {});
-      getAppObservability().analytics.track('cc_circle_created', props);
+      // The typed analytics client validates the event: `cc_circle_created` sends no circle or person names.
+      void getAppObservability()
+        .analytics.track('cc_circle_created', {})
+        .catch(() => undefined);
     });
 
   let rpcData: unknown;
@@ -132,7 +140,8 @@ export async function createCircleViaRpc(
   }
 
   if (rpcError) {
-    if (rpcError.code === 'P0001' || /CIRCLE_LIMIT_REACHED/i.test(rpcError.message ?? '')) {
+    // P0001 is Postgres's generic "raise exception" code, so match the message, not the code.
+    if (/CIRCLE_LIMIT_REACHED/.test(rpcError.message ?? '')) {
       return {
         ok: false,
         errorCode: 'CIRCLE_LIMIT_REACHED',
@@ -159,8 +168,8 @@ export async function createCircleViaRpc(
 
   const rowParsed = circleRowSchema.safeParse(normalizedRow);
   const circleParsed = rowParsed.success
-    ? circleSchema.safeParse(snakeToCamel(rowParsed.data))
-    : circleSchema.safeParse(normalizedRow);
+    ? circleSchema.safeParse(circleFromRow(rowParsed.data))
+    : rowParsed;
 
   if (!circleParsed.success) {
     return {

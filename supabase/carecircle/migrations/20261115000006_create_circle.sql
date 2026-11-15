@@ -62,6 +62,10 @@ begin
   -- Spec "Roles and permissions": limit is 1 circle (applies to both Free and Family plans).
   -- Until Taha clarifies whether "1 circle" means 1 owned circle or 1 membership in any role,
   -- refuse a second circle that the caller would own.
+  -- Two calls at once (a double tap, or two phones) would both pass the check below and
+  -- create two owned circles. This lock makes the second call wait until the first commits.
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(v_user_id::text, 0));
+
   if exists (
     select 1
       from public.circle_members cm

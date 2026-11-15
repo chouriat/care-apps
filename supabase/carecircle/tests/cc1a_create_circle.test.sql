@@ -11,7 +11,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(17);
+select plan(18);
 
 -- 1. Function security metadata and privileges
 select is(
@@ -31,6 +31,13 @@ select is(
   has_function_privilege('authenticated', 'public.create_circle(text, text, text, text, date)', 'EXECUTE'),
   true,
   'authenticated role can execute public.create_circle'
+);
+
+select ok(
+  (select pg_get_functiondef(p.oid) ~ 'pg_advisory_xact_lock'
+     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'create_circle'),
+  'create_circle takes a per-user lock so two calls at once cannot both create an owned circle'
 );
 
 -- Seed two authenticated users

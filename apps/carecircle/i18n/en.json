@@ -147,6 +147,11 @@
     "joinInputLabel": "Invite link or token",
     "joinInputPlaceholder": "carecircle://invite/..."
   },
+  "home": {
+    "loadErrorTitle": "Could not load your care circle",
+    "loadErrorMessage": "Check your internet connection and try again.",
+    "retry": "Try again"
+  },
   "today": {
     "title": "Today",
     "emptyTitle": "Your care plan is ready",
