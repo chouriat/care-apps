@@ -489,7 +489,9 @@ select is(
 );
 
 -- 8. A helper who leaves the circle loses access to its photos at once, even to one they uploaded.
-select pg_temp.as_user('cc4a0002-0000-4000-8000-000000000002'::uuid);
+--    (The photo is seeded as postgres with the helper as uploader, so this part runs even before the
+--    upload policy exists.)
+set local role postgres;
 insert into storage.objects (id, bucket_id, name, owner, owner_id)
 values (
   'cc4af00d-0000-4000-8000-00000000000d'::uuid,
@@ -499,7 +501,6 @@ values (
   'cc4a0002-0000-4000-8000-000000000002'
 );
 
-set local role postgres;
 delete from public.circle_members
  where circle_id = 'cc4ac001-0000-4000-8000-000000000001'::uuid
    and user_id = 'cc4a0002-0000-4000-8000-000000000002'::uuid;
