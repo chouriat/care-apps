@@ -20,3 +20,6 @@ enable_signup = true
 
 [auth.rate_limit]
 email_sent = 100
+
+[functions.revenuecat-webhook]
+verify_jwt = false

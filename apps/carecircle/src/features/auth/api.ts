@@ -23,6 +23,7 @@ import {
 } from 'react-native';
 import { getAppPushNotificationsController } from '../notifications/api';
 import { getAppObservability } from '../observability/api';
+import { syncRevenueCatAuthUser } from '../paywall/api';
 
 export const APP_AUTH_REDIRECT_URL = 'carecircle://auth/callback';
 
@@ -209,6 +210,7 @@ export function getAppAuthController(): AuthController {
 
     async signOut() {
       await getAppPushNotificationsController().unregisterBeforeSignOut();
+      await syncRevenueCatAuthUser(null);
       const { error } = await supabase.auth.signOut();
       return {
         error: toAdapterError(error),
@@ -227,6 +229,9 @@ export function getAppAuthController(): AuthController {
   controller.subscribe((nextState) => {
     void getAppPushNotificationsController().syncAuthStatus(nextState.status);
     getAppObservability().syncAuthState(nextState);
+    void syncRevenueCatAuthUser(
+      nextState.status === 'authenticated' ? (nextState.session?.user?.id ?? null) : null,
+    );
   });
 
   supabase.auth.onAuthStateChange((event, session) => {
