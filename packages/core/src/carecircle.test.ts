@@ -332,3 +332,293 @@ describe('CC-0 C1 Zod schemas and mock dataset (@carecircle/core)', () => {
     }
   });
 });
+
+// Added in review: every C1 row, field by field, in both shapes (database snake_case and
+// app camelCase, AGENTS.md 5.2), and a mock dataset that hangs together.
+type Shapes = { row: string; camel: string };
+type TableSpec = {
+  shapes: Shapes;
+  valid: Record<string, unknown>;
+  nullable: string[];
+  required: string[];
+  enums: string[];
+  timestamps: string[];
+  dates: string[];
+  uuids: string[];
+};
+
+const ID = 'c1c00001-0000-4000-8000-000000000001';
+const USER = 'c1000001-1111-4111-8111-111111111111';
+const AT = '2026-11-15T12:00:00.000Z';
+
+const TABLES: Record<string, TableSpec> = {
+  circles: {
+    shapes: { row: 'circleRowSchema', camel: 'circleSchema' },
+    valid: {
+      id: ID,
+      name: 'Mum',
+      care_recipient_name: 'Alex',
+      care_recipient_dob: '1948-05-12',
+      timezone: 'Europe/London',
+      created_by: USER,
+      created_at: AT,
+    },
+    nullable: ['care_recipient_dob'],
+    required: ['id', 'name', 'care_recipient_name', 'timezone', 'created_at'],
+    enums: [],
+    timestamps: ['created_at'],
+    dates: ['care_recipient_dob'],
+    uuids: ['id', 'created_by'],
+  },
+  circle_members: {
+    shapes: { row: 'circleMemberRowSchema', camel: 'circleMemberSchema' },
+    valid: { circle_id: ID, user_id: USER, role: 'viewer', joined_at: AT },
+    nullable: [],
+    required: ['circle_id', 'user_id', 'role', 'joined_at'],
+    enums: ['role'],
+    timestamps: ['joined_at'],
+    dates: [],
+    uuids: ['circle_id', 'user_id'],
+  },
+  invites: {
+    shapes: { row: 'inviteRowSchema', camel: 'inviteSchema' },
+    valid: {
+      id: ID,
+      circle_id: ID,
+      token: 'a'.repeat(64),
+      role: 'helper',
+      expires_at: AT,
+      used_by: null,
+    },
+    nullable: ['used_by'],
+    required: ['id', 'circle_id', 'token', 'role', 'expires_at'],
+    enums: ['role'],
+    timestamps: ['expires_at'],
+    dates: [],
+    uuids: ['id', 'circle_id', 'used_by'],
+  },
+  medications: {
+    shapes: { row: 'medicationRowSchema', camel: 'medicationSchema' },
+    valid: {
+      id: ID,
+      circle_id: ID,
+      name: 'Metformin',
+      strength: '500 mg',
+      dose_text: '1 tablet',
+      schedule: { kind: 'every_n_days', n: 2, times: ['07:30'] },
+      instructions: 'With food',
+      start_date: '2026-11-01',
+      end_date: '2026-12-01',
+      active: false,
+      source: 'photo',
+    },
+    nullable: ['strength', 'instructions', 'end_date'],
+    required: ['id', 'circle_id', 'name', 'dose_text', 'schedule', 'active', 'source'],
+    enums: ['source'],
+    timestamps: [],
+    dates: ['start_date', 'end_date'],
+    uuids: ['id', 'circle_id'],
+  },
+  dose_events: {
+    shapes: { row: 'doseEventRowSchema', camel: 'doseEventSchema' },
+    valid: {
+      id: ID,
+      medication_id: ID,
+      circle_id: ID,
+      due_at: AT,
+      status: 'skipped',
+      acted_by: USER,
+      acted_at: AT,
+    },
+    nullable: ['acted_by', 'acted_at'],
+    required: ['id', 'medication_id', 'circle_id', 'due_at', 'status'],
+    enums: ['status'],
+    timestamps: ['due_at', 'acted_at'],
+    dates: [],
+    uuids: ['id', 'medication_id', 'circle_id', 'acted_by'],
+  },
+  appointments: {
+    shapes: { row: 'appointmentRowSchema', camel: 'appointmentSchema' },
+    valid: {
+      id: ID,
+      circle_id: ID,
+      title: 'GP',
+      starts_at: AT,
+      ends_at: AT,
+      location: 'Clinic',
+      driver_user_id: USER,
+      notes: 'Bring list',
+    },
+    nullable: ['ends_at', 'location', 'driver_user_id', 'notes'],
+    required: ['id', 'circle_id', 'title', 'starts_at'],
+    enums: [],
+    timestamps: ['starts_at', 'ends_at'],
+    dates: [],
+    uuids: ['id', 'circle_id', 'driver_user_id'],
+  },
+  tasks: {
+    shapes: { row: 'taskRowSchema', camel: 'taskSchema' },
+    valid: {
+      id: ID,
+      circle_id: ID,
+      title: 'Refill',
+      due_at: AT,
+      assignee: USER,
+      done_at: AT,
+      done_by: USER,
+      source: 'visit_note',
+    },
+    nullable: ['due_at', 'assignee', 'done_at', 'done_by'],
+    required: ['id', 'circle_id', 'title', 'source'],
+    enums: ['source'],
+    timestamps: ['due_at', 'done_at'],
+    dates: [],
+    uuids: ['id', 'circle_id', 'assignee', 'done_by'],
+  },
+  visit_notes: {
+    shapes: { row: 'visitNoteRowSchema', camel: 'visitNoteSchema' },
+    valid: {
+      id: ID,
+      circle_id: ID,
+      appointment_id: ID,
+      transcript: 'T',
+      summary: 'S',
+      created_by: USER,
+      created_at: AT,
+    },
+    nullable: ['appointment_id'],
+    required: ['id', 'circle_id', 'created_at'],
+    enums: [],
+    timestamps: ['created_at'],
+    dates: [],
+    uuids: ['id', 'circle_id', 'appointment_id', 'created_by'],
+  },
+  log_entries: {
+    shapes: { row: 'logEntryRowSchema', camel: 'logEntrySchema' },
+    valid: {
+      id: ID,
+      circle_id: ID,
+      type: 'member',
+      ref_id: USER,
+      summary: 'Joined',
+      created_by: USER,
+      created_at: AT,
+    },
+    nullable: [],
+    required: ['id', 'circle_id', 'type', 'created_at'],
+    enums: ['type'],
+    timestamps: ['created_at'],
+    dates: [],
+    uuids: ['id', 'circle_id', 'ref_id', 'created_by'],
+  },
+};
+
+const toCamel = (k: string) => k.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+function camelRow(row: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(row).map(([k, v]) => [toCamel(k), v]));
+}
+
+describe('CC-0 C1 rows field by field (added in review)', () => {
+  for (const [table, spec] of Object.entries(TABLES)) {
+    for (const shape of ['row', 'camel'] as const) {
+      it(`${table} (${shape === 'row' ? 'database snake_case' : 'app camelCase'}) follows C1`, () => {
+        const schemas = loadCareCircleSchemas() as unknown as Record<string, z.ZodType<unknown>>;
+        const schema = schemas[spec.shapes[shape]] as z.ZodType<unknown>;
+        const key = (k: string) => (shape === 'row' ? k : toCamel(k));
+        const base = shape === 'row' ? spec.valid : camelRow(spec.valid);
+        const ok = (patch: Record<string, unknown>, drop?: string) => {
+          const value: Record<string, unknown> = { ...base, ...patch };
+          if (drop) delete value[drop];
+          return schema.safeParse(value).success;
+        };
+
+        expect(ok({})).toBe(true);
+        expect(ok({ unexpected: 1 })).toBe(false);
+        // The other shape's keys are refused (no mixing snake_case and camelCase).
+        const otherShape = shape === 'row' ? camelRow(spec.valid) : spec.valid;
+        expect(schema.safeParse(otherShape).success).toBe(false);
+        for (const f of spec.nullable)
+          expect({ f, ok: ok({ [key(f)]: null }) }).toEqual({ f, ok: true });
+        for (const f of spec.required) {
+          expect({ f, nullOk: ok({ [key(f)]: null }) }).toEqual({ f, nullOk: false });
+          expect({ f, missingOk: ok({}, key(f)) }).toEqual({ f, missingOk: false });
+        }
+        for (const f of spec.enums)
+          expect({ f, ok: ok({ [key(f)]: 'bogus' }) }).toEqual({ f, ok: false });
+        for (const f of spec.timestamps) {
+          expect({ f, ok: ok({ [key(f)]: '2026-11-15' }) }).toEqual({ f, ok: false });
+          expect({ f, ok: ok({ [key(f)]: 'tomorrow' }) }).toEqual({ f, ok: false });
+          expect({ f, ok: ok({ [key(f)]: '2026-11-15T12:00:00+01:00' }) }).toEqual({ f, ok: true });
+        }
+        for (const f of spec.dates) {
+          expect({ f, ok: ok({ [key(f)]: '12/05/1948' }) }).toEqual({ f, ok: false });
+          expect({ f, ok: ok({ [key(f)]: '2026-11-15T12:00:00.000Z' }) }).toEqual({ f, ok: false });
+        }
+        for (const f of spec.uuids)
+          expect({ f, ok: ok({ [key(f)]: 'not-a-uuid' }) }).toEqual({ f, ok: false });
+      });
+    }
+  }
+
+  it('the mock dataset hangs together like real data', () => {
+    const { CARECIRCLE_MOCKS: m } = loadCareCircleSchemas();
+    const circleId = m.circle.id;
+    const rows = [...m.members, ...m.medications, ...m.doseEvents, ...m.appointments, ...m.tasks];
+    expect(rows.every((r) => r.circleId === circleId)).toBe(true);
+
+    expect(new Set(m.members.map((x) => x.userId)).size).toBe(3);
+    expect(m.members.filter((x) => x.role === 'owner')).toHaveLength(1);
+
+    // One medication per schedule kind, so every screen state has data.
+    const kinds = m.medications.map((x) => (x.schedule as { kind: string }).kind).sort();
+    expect(kinds).toEqual(['as_needed', 'daily', 'every_n_days', 'weekly']);
+
+    const medsById = new Map(m.medications.map((x) => [x.id, x]));
+    const seen = new Set<string>();
+    for (const dose of m.doseEvents) {
+      const med = medsById.get(dose.medicationId as string);
+      expect(med).toBeDefined();
+      // as_needed creates no scheduled events: only doses someone logged as given.
+      const asNeeded = (med?.schedule as { kind?: string } | undefined)?.kind === 'as_needed';
+      expect({ asNeeded, status: asNeeded ? dose.status : 'given' }).toEqual({
+        asNeeded,
+        status: 'given',
+      });
+      // unique (medication_id, due_at), as in C1.
+      const pair = `${String(dose.medicationId)}|${String(dose.dueAt)}`;
+      expect(seen.has(pair)).toBe(false);
+      seen.add(pair);
+    }
+    // Days of dose events are 7 consecutive calendar days.
+    const days = [...new Set(m.doseEvents.map((d) => String(d.dueAt).slice(0, 10)))].sort();
+    const span = (Date.parse(days[days.length - 1] ?? '') - Date.parse(days[0] ?? '')) / 86_400_000;
+    expect(span).toBe(6);
+
+    const ids = rows.flatMap((r) => ('id' in r ? [r.id] : []));
+    expect(new Set(ids).size).toBe(ids.length);
+
+    const memberIds = new Set(m.members.map((x) => x.userId));
+    const strangers = [
+      ...m.appointments.map((a) => a.driverUserId),
+      ...m.tasks.map((t) => t.assignee),
+    ].filter((u) => u != null && !memberIds.has(u));
+    // Drivers and assignees are members of the circle.
+    expect(strangers).toEqual([]);
+  });
+});
+
+describe('CC-0 schedule JSON, weekday names (added in review)', () => {
+  it('weekly days are exactly mon..sun', () => {
+    const { scheduleSchema } = loadCareCircleSchemas();
+    const week = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+    expect(scheduleSchema.safeParse({ kind: 'weekly', days: week, times: ['09:00'] }).success).toBe(
+      true,
+    );
+    for (const day of ['xyz', 'Mon', 'MON', 'thur', 'sunday']) {
+      expect({
+        day,
+        ok: scheduleSchema.safeParse({ kind: 'weekly', days: [day], times: ['09:00'] }).success,
+      }).toEqual({ day, ok: false });
+    }
+  });
+});

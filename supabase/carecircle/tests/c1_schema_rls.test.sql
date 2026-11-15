@@ -316,7 +316,7 @@ insert into public.invites (id, circle_id, token, role, expires_at)
 values (
   'c1100001-0000-4000-8000-000000000001'::uuid,
   'c1c00001-0000-4000-8000-000000000001'::uuid,
-  'invite-token-seed-1',
+  '5eed000000000000000000000000000000000000000000000000000000000001',
   'helper',
   now() + interval '7 days'
 );
@@ -431,7 +431,7 @@ select set_config(
 -- 71-79: Viewer can read rows in their circle across all 9 tables
 select is(pg_temp.visible_rows('circles'), 1, 'viewer reads circles in their circle');
 select is(pg_temp.visible_rows('circle_members'), 3, 'viewer reads circle_members in their circle');
-select is(pg_temp.visible_rows('invites'), 1, 'viewer reads invites in their circle');
+select is(pg_temp.visible_rows('invites'), 0, 'viewer cannot read invite links (owner only: a readable token would let a viewer invite people)');
 select is(pg_temp.visible_rows('medications'), 1, 'viewer reads medications in their circle');
 select is(pg_temp.visible_rows('dose_events'), 1, 'viewer reads dose_events in their circle');
 select is(pg_temp.visible_rows('appointments'), 1, 'viewer reads appointments in their circle');
@@ -460,8 +460,8 @@ select is(
 
 select is(
   pg_temp.write_blocked($$
-    insert into public.invites (circle_id, token, role, expires_at)
-    values ('c1c00001-0000-4000-8000-000000000001'::uuid, 'viewer-token', 'viewer', now() + interval '7 days')
+    insert into public.invites (circle_id, role)
+    values ('c1c00001-0000-4000-8000-000000000001'::uuid, 'viewer')
   $$),
   true,
   'viewer insert into invites fails'
@@ -665,8 +665,8 @@ select set_config(
 
 select is(
   pg_temp.write_blocked($$
-    insert into public.invites (circle_id, token, role, expires_at)
-    values ('c1c00001-0000-4000-8000-000000000001'::uuid, 'helper-token', 'helper', now() + interval '7 days')
+    insert into public.invites (circle_id, role)
+    values ('c1c00001-0000-4000-8000-000000000001'::uuid, 'helper')
   $$),
   true,
   'helper cannot create invites'
@@ -733,9 +733,9 @@ select set_config(
 );
 
 select lives_ok(
-  $$insert into public.invites (circle_id, token, role, expires_at)
-    values ('c1c00001-0000-4000-8000-000000000001'::uuid, 'owner-invite-token', 'helper', now() + interval '7 days')$$,
-  'owner can create invites'
+  $$insert into public.invites (circle_id, role)
+    values ('c1c00001-0000-4000-8000-000000000001'::uuid, 'helper')$$,
+  'owner can create invites (the database makes the token)'
 );
 
 select lives_ok(

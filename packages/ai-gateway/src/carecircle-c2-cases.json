@@ -1,0 +1,196 @@
+{
+  "_comment": "Contract C2 cases. The package schemas (Jest) and the gateway's own copy in supabase/carecircle/functions/ai/routes.ts (Deno) must give the same answer for every case. In an invalid case, each key of patch replaces that key of the first valid output; a null value removes the key.",
+  "extractPrescription": {
+    "valid": [
+      {
+        "why": "spec example",
+        "output": {
+          "name": "Metformin",
+          "strength": "500 mg",
+          "doseText": "1 tablet",
+          "schedule": { "kind": "daily", "times": ["08:00", "20:00"] },
+          "instructions": "Take with food",
+          "fieldConfidence": { "name": 0.97, "strength": 0.92, "schedule": 0.71 },
+          "rawText": "Metformin 500 mg take 1 tablet twice daily with food"
+        }
+      },
+      {
+        "why": "label without strength or instructions, every confidence key, weekly schedule",
+        "output": {
+          "name": "Vitamin D",
+          "strength": null,
+          "doseText": "1 capsule",
+          "schedule": { "kind": "weekly", "days": ["mon", "thu"], "times": ["09:00"] },
+          "instructions": null,
+          "fieldConfidence": {
+            "name": 0.9,
+            "strength": 0,
+            "doseText": 1,
+            "schedule": 0.8,
+            "instructions": 0.5
+          },
+          "rawText": ""
+        }
+      },
+      {
+        "why": "every_n_days and as_needed schedules",
+        "output": {
+          "name": "Paracetamol",
+          "strength": "500 mg",
+          "doseText": "2 tablets",
+          "schedule": { "kind": "as_needed" },
+          "instructions": "Max 8 tablets a day",
+          "fieldConfidence": {},
+          "rawText": "x"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "why": "unknown schedule kind",
+        "patch": { "schedule": { "kind": "monthly", "times": ["08:00"] } }
+      },
+      { "why": "daily without times", "patch": { "schedule": { "kind": "daily" } } },
+      { "why": "time not HH:MM", "patch": { "schedule": { "kind": "daily", "times": ["8am"] } } },
+      {
+        "why": "weekday not mon..sun",
+        "patch": { "schedule": { "kind": "weekly", "days": ["monday"], "times": ["09:00"] } }
+      },
+      {
+        "why": "every_n_days with n 0",
+        "patch": { "schedule": { "kind": "every_n_days", "n": 0, "times": ["08:00"] } }
+      },
+      {
+        "why": "as_needed with times",
+        "patch": { "schedule": { "kind": "as_needed", "times": ["08:00"] } }
+      },
+      { "why": "confidence above 1", "patch": { "fieldConfidence": { "name": 1.2 } } },
+      { "why": "confidence below 0", "patch": { "fieldConfidence": { "schedule": -0.1 } } },
+      {
+        "why": "confidence for a field that does not exist",
+        "patch": { "fieldConfidence": { "patientName": 0.9 } }
+      },
+      { "why": "confidence not a number", "patch": { "fieldConfidence": { "name": "high" } } },
+      { "why": "empty name", "patch": { "name": "" } },
+      { "why": "blank name", "patch": { "name": "   " } },
+      { "why": "empty doseText", "patch": { "doseText": "" } },
+      { "why": "name missing", "patch": { "name": null } },
+      { "why": "rawText missing", "patch": { "rawText": null } },
+      { "why": "strength is a number", "patch": { "strength": 500 } }
+    ]
+  },
+  "summarizeVisit": {
+    "valid": [
+      {
+        "why": "spec example plus a start and a change_dose",
+        "output": {
+          "summary": "Blood pressure is stable. Book a blood test in two weeks. Stop aspirin until the next visit.",
+          "followUps": [
+            { "title": "Book blood test", "dueHint": "in 2 weeks", "dueDate": "2026-11-23" }
+          ],
+          "medChanges": [
+            {
+              "action": "stop",
+              "medicationId": "c1200001-0000-4000-8000-000000000001",
+              "name": "Aspirin",
+              "detail": "Stop until next visit"
+            },
+            {
+              "action": "start",
+              "medicationId": null,
+              "name": "Vitamin D3",
+              "detail": "1000 IU once daily"
+            },
+            {
+              "action": "change_dose",
+              "medicationId": "c1200002-0000-4000-8000-000000000002",
+              "name": "Metformin",
+              "detail": "1000 mg twice daily"
+            }
+          ],
+          "questionsToAsk": ["Should we bring the blood pressure log?"]
+        }
+      },
+      {
+        "why": "nothing to do, follow-up without a date",
+        "output": {
+          "summary": "Routine visit. Nothing changes.",
+          "followUps": [{ "title": "Call if dizzy", "dueHint": null, "dueDate": null }],
+          "medChanges": [],
+          "questionsToAsk": []
+        }
+      }
+    ],
+    "invalid": [
+      { "why": "empty summary", "patch": { "summary": "" } },
+      {
+        "why": "unknown action",
+        "patch": {
+          "medChanges": [
+            {
+              "action": "pause",
+              "medicationId": "c1200001-0000-4000-8000-000000000001",
+              "name": "Aspirin",
+              "detail": null
+            }
+          ]
+        }
+      },
+      {
+        "why": "start with a medicationId",
+        "patch": {
+          "medChanges": [
+            {
+              "action": "start",
+              "medicationId": "c1200001-0000-4000-8000-000000000001",
+              "name": "Vitamin D3",
+              "detail": null
+            }
+          ]
+        }
+      },
+      {
+        "why": "stop without a medicationId",
+        "patch": {
+          "medChanges": [
+            { "action": "stop", "medicationId": null, "name": "Aspirin", "detail": null }
+          ]
+        }
+      },
+      {
+        "why": "change_dose without a medicationId",
+        "patch": {
+          "medChanges": [
+            { "action": "change_dose", "medicationId": null, "name": "Aspirin", "detail": "half" }
+          ]
+        }
+      },
+      {
+        "why": "stop with a medicationId that is not a UUID",
+        "patch": {
+          "medChanges": [
+            { "action": "stop", "medicationId": "aspirin", "name": "Aspirin", "detail": null }
+          ]
+        }
+      },
+      {
+        "why": "medChange without a name",
+        "patch": {
+          "medChanges": [{ "action": "start", "medicationId": null, "name": "", "detail": null }]
+        }
+      },
+      {
+        "why": "follow-up without a title",
+        "patch": { "followUps": [{ "title": "", "dueHint": null, "dueDate": null }] }
+      },
+      {
+        "why": "follow-up date not YYYY-MM-DD",
+        "patch": {
+          "followUps": [{ "title": "Blood test", "dueHint": null, "dueDate": "in 2 weeks" }]
+        }
+      },
+      { "why": "questionsToAsk not strings", "patch": { "questionsToAsk": [42] } },
+      { "why": "followUps missing", "patch": { "followUps": null } }
+    ]
+  }
+}

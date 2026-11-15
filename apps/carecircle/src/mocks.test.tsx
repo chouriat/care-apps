@@ -71,3 +71,60 @@ describe('CC-0 MOCKS=1 app loader (apps/carecircle)', () => {
     expect(screen.getByTestId('mocks-loaded')).toBeTruthy();
   });
 });
+
+// Added in review: the flag must be exactly "1", the indicator must stay away without it,
+// Expo only bundles EXPO_PUBLIC_ variables into the app, and the fake AI answers must match C2.
+describe('CC-0 MOCKS flag, more cases (added in review)', () => {
+  const saved = { MOCKS: process.env.MOCKS, EXPO_PUBLIC_MOCKS: process.env.EXPO_PUBLIC_MOCKS };
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it('only the exact value "1" turns mocks on', () => {
+    const { isMocksEnabled, loadCareCircleMocks } = requireMocksFeature();
+    for (const value of ['', 'true', 'yes', '01', ' 1', 'false']) {
+      expect({ value, on: isMocksEnabled({ MOCKS: value }) }).toEqual({ value, on: false });
+      expect({ value, on: isMocksEnabled({ EXPO_PUBLIC_MOCKS: value }) }).toEqual({
+        value,
+        on: false,
+      });
+    }
+    expect(loadCareCircleMocks({ MOCKS: 'true' })).toBeNull();
+  });
+
+  it('without the flag the app shows no mock data', async () => {
+    requireMocksFeature();
+    delete process.env.MOCKS;
+    delete process.env.EXPO_PUBLIC_MOCKS;
+    await render(<PlaceholderScreen />);
+    expect(screen.queryByTestId('mocks-loaded')).toBeNull();
+  });
+
+  it('EXPO_PUBLIC_MOCKS=1 (the variable Expo puts in the app bundle) turns mocks on in the app', async () => {
+    requireMocksFeature();
+    delete process.env.MOCKS;
+    process.env.EXPO_PUBLIC_MOCKS = '1';
+    await render(<PlaceholderScreen />);
+    expect(screen.getByTestId('mocks-loaded')).toBeTruthy();
+  });
+
+  it('the fake AI answers in the mocks pass the C2 schemas, and the mock rows pass the C1 schemas', () => {
+    const { loadCareCircleMocks } = requireMocksFeature();
+    const mocks = loadCareCircleMocks({ MOCKS: '1' });
+    const rx = jest.requireActual<{
+      extractPrescriptionOutputSchema: { safeParse(v: unknown): { success: boolean } };
+    }>('@carecircle/ai-gateway/schemas/carecircle/extractPrescription');
+    const visit = jest.requireActual<{
+      summarizeVisitOutputSchema: { safeParse(v: unknown): { success: boolean } };
+    }>('@carecircle/ai-gateway/schemas/carecircle/summarizeVisit');
+    expect(
+      rx.extractPrescriptionOutputSchema.safeParse(mocks?.aiResponses.extractPrescription).success,
+    ).toBe(true);
+    expect(
+      visit.summarizeVisitOutputSchema.safeParse(mocks?.aiResponses.summarizeVisit).success,
+    ).toBe(true);
+  });
+});

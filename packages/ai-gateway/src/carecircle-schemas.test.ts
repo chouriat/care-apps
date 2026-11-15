@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import c2Cases from './carecircle-c2-cases.json';
 
 interface ExtractPrescriptionModule {
   extractPrescriptionInputSchema: z.ZodType<{ imagePath: string }>;
@@ -179,5 +180,120 @@ describe('CC-0 C2 AI schemas (@carecircle/ai-gateway)', () => {
         summary: '',
       }).success,
     ).toBe(false);
+  });
+});
+
+// Added in review: the shared C2 case list (also run against the gateway's copy in Deno),
+// the fields the tests above did not reach, and the providers' JSON schemas.
+type C2Case = { why: string; patch: Record<string, unknown> };
+
+function applyPatch(base: Record<string, unknown>, patch: Record<string, unknown>) {
+  const out: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete out[key];
+    else out[key] = value;
+  }
+  return out;
+}
+
+const [firstRx] = c2Cases.extractPrescription.valid;
+const [firstVisit] = c2Cases.summarizeVisit.valid;
+const rxBase: Record<string, unknown> = { ...firstRx?.output };
+const visitBase: Record<string, unknown> = { ...firstVisit?.output };
+
+function passesOrStrips(schema: z.ZodType<unknown>, value: Record<string, unknown>, key: string) {
+  const parsed = schema.safeParse(value);
+  return parsed.success && Object.prototype.hasOwnProperty.call(parsed.data, key);
+}
+
+describe('CC-0 C2 contract, field by field (added in review)', () => {
+  it('extractPrescription output: every shared valid case passes and every invalid case fails', () => {
+    const { extractPrescriptionOutputSchema } = loadExtractPrescription();
+    const base = rxBase as Record<string, unknown>;
+    for (const { why, output } of c2Cases.extractPrescription.valid) {
+      expect({ why, ok: extractPrescriptionOutputSchema.safeParse(output).success }).toEqual({
+        why,
+        ok: true,
+      });
+    }
+    for (const { why, patch } of c2Cases.extractPrescription.invalid as C2Case[]) {
+      const ok = extractPrescriptionOutputSchema.safeParse(applyPatch(base, patch)).success;
+      expect({ why, ok }).toEqual({ why, ok: false });
+    }
+  });
+
+  it('summarizeVisit output: every shared valid case passes and every invalid case fails', () => {
+    const { summarizeVisitOutputSchema } = loadSummarizeVisit();
+    const base = visitBase as Record<string, unknown>;
+    for (const { why, output } of c2Cases.summarizeVisit.valid) {
+      expect({ why, ok: summarizeVisitOutputSchema.safeParse(output).success }).toEqual({
+        why,
+        ok: true,
+      });
+    }
+    for (const { why, patch } of c2Cases.summarizeVisit.invalid as C2Case[]) {
+      const ok = summarizeVisitOutputSchema.safeParse(applyPatch(base, patch)).success;
+      expect({ why, ok }).toEqual({ why, ok: false });
+    }
+  });
+
+  it('an extra field from the model never reaches the app (rejected or stripped)', () => {
+    const { extractPrescriptionOutputSchema } = loadExtractPrescription();
+    const { summarizeVisitOutputSchema } = loadSummarizeVisit();
+    const rx = { ...rxBase, patientName: 'Jane Doe' };
+    const visit = { ...visitBase, diagnosis: 'free text' };
+    expect(passesOrStrips(extractPrescriptionOutputSchema, rx, 'patientName')).toBe(false);
+    expect(passesOrStrips(summarizeVisitOutputSchema, visit, 'diagnosis')).toBe(false);
+  });
+
+  it('summarizeVisit input: text or audioPath, never empty, and knownMeds are checked', () => {
+    const { summarizeVisitInputSchema } = loadSummarizeVisit();
+    const med = { id: 'c1200001-0000-4000-8000-000000000001', name: 'Aspirin', strength: '81 mg' };
+    const ok = (v: unknown) => summarizeVisitInputSchema.safeParse(v).success;
+
+    expect(ok({ text: 'Doctor said all fine.', knownMeds: [] })).toBe(true);
+    expect(ok({ text: 'Doctor said all fine.', knownMeds: [{ ...med, strength: null }] })).toBe(
+      true,
+    );
+    expect(ok({ audioPath: 'circles/1/visit.m4a', text: 'notes too', knownMeds: [med] })).toBe(
+      true,
+    );
+    expect(ok({ text: '', knownMeds: [med] })).toBe(false);
+    expect(ok({ text: '   ', knownMeds: [med] })).toBe(false);
+    expect(ok({ audioPath: '', knownMeds: [med] })).toBe(false);
+    expect(ok({ text: 'x' })).toBe(false);
+    expect(ok({ text: 'x', knownMeds: [{ ...med, id: 'aspirin' }] })).toBe(false);
+    expect(ok({ text: 'x', knownMeds: [{ id: med.id }] })).toBe(false);
+  });
+
+  it('the JSON schemas sent to the providers list the same fields and actions as the Zod schemas', () => {
+    const { extractPrescriptionJsonSchema } = loadExtractPrescription();
+    const { summarizeVisitJsonSchema } = loadSummarizeVisit();
+    const props = (s: Record<string, unknown>) =>
+      Object.keys((s.properties ?? {}) as Record<string, unknown>).sort();
+
+    expect(extractPrescriptionJsonSchema.additionalProperties).toBe(false);
+    expect(props(extractPrescriptionJsonSchema)).toEqual([
+      'doseText',
+      'fieldConfidence',
+      'instructions',
+      'name',
+      'rawText',
+      'schedule',
+      'strength',
+    ]);
+    expect(summarizeVisitJsonSchema.additionalProperties).toBe(false);
+    expect(props(summarizeVisitJsonSchema)).toEqual([
+      'followUps',
+      'medChanges',
+      'questionsToAsk',
+      'summary',
+    ]);
+    expect(JSON.stringify(summarizeVisitJsonSchema)).toContain(
+      '"enum":["start","stop","change_dose"]',
+    );
+    expect(JSON.stringify(extractPrescriptionJsonSchema)).toContain(
+      '"enum":["daily","weekly","every_n_days","as_needed"]',
+    );
   });
 });
