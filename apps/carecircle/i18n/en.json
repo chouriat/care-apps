@@ -100,6 +100,8 @@
   "paywall": {
     "title": "CareCircle Family Plan",
     "subtitle": "Invite up to 8 family members, unlock AI visit-note summaries, and export care log PDFs.",
+    "startFreeTrialCta": "Start free trial",
+    "startFreeTrialA11y": "Start free trial of the CareCircle Family plan",
     "subscribeCta": "Subscribe to the Family plan",
     "subscribeA11y": "Subscribe to the CareCircle Family plan",
     "restoreCta": "Restore purchases",
@@ -116,5 +118,38 @@
     "offlineTitle": "You are offline",
     "offlineMessage": "Purchases and restores require an internet connection. Reconnect and try again.",
     "retry": "Try again"
+  },
+  "onboarding": {
+    "title": "Set up your CareCircle",
+    "subtitle": "Create a shared care circle for your parent or join an existing family circle.",
+    "choiceCreate": "Create a circle",
+    "choiceCreateA11y": "Create a new care circle",
+    "choiceJoin": "Join with an invite link",
+    "choiceJoinA11y": "Join an existing care circle with an invite link",
+    "circleNameLabel": "Circle name",
+    "circleNamePlaceholder": "Smith Family Care",
+    "careRecipientLabel": "Care recipient name",
+    "careRecipientPlaceholder": "Evelyn Smith",
+    "timezoneLabel": "Time zone",
+    "timezonePlaceholder": "Europe/Paris",
+    "submitCreate": "Create circle",
+    "submitCreateA11y": "Create care circle",
+    "loading": "Creating your care circle...",
+    "validationError": "Please enter a circle name, care recipient name, and valid IANA time zone.",
+    "errorTitle": "Could not create circle",
+    "errorMessage": "We could not create your care circle right now. Please try again.",
+    "limitReachedMessage": "You already have a care circle on this account.",
+    "offlineTitle": "You are offline",
+    "offlineMessage": "Creating a care circle requires an internet connection. Reconnect and try again.",
+    "retry": "Try again",
+    "joinTitle": "Join a family circle",
+    "joinBody": "Open the invite link shared by your family circle owner, or paste the invite link below.",
+    "joinInputLabel": "Invite link or token",
+    "joinInputPlaceholder": "carecircle://invite/..."
+  },
+  "today": {
+    "title": "Today",
+    "emptyTitle": "Your care plan is ready",
+    "emptyMessage": "No doses, appointments, or tasks are scheduled for today yet."
   }
 }

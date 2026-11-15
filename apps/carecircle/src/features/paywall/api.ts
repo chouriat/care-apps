@@ -8,8 +8,12 @@ import {
   type RevenueCatSdkAdapter,
 } from '@carecircle/core';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { Platform } from 'react-native';
-import Purchases, { type CustomerInfo } from 'react-native-purchases';
+import { Linking, Platform } from 'react-native';
+import Purchases, {
+  type CustomerInfo,
+  type PurchasesOfferings,
+  type PurchasesPackage,
+} from 'react-native-purchases';
 import { getSupabaseClient } from '../auth/api';
 import { getAppObservability } from '../observability/api';
 
@@ -109,6 +113,90 @@ export async function syncRevenueCatAuthUser(userId: string | null): Promise<voi
   }
 }
 
+export interface FamilyOfferInfo {
+  priceText: string | null;
+  hasIntroOffer: boolean;
+}
+
+// RevenueCat Offerings & Displaying Products (`Purchases.getOfferings()`, `offering.monthly`,
+// `$rc_monthly` / `PACKAGE_TYPE.MONTHLY`, `product.priceString`, `product.introPrice`):
+// https://www.revenuecat.com/docs/offerings/offerings (checked 2026-11-15)
+// https://www.revenuecat.com/docs/getting-started/displaying-products (checked 2026-11-15)
+export function selectFamilyPackage(
+  offerings: PurchasesOfferings | null | undefined,
+): PurchasesPackage | null {
+  const current = offerings?.current;
+  if (!current) {
+    return null;
+  }
+  if (current.monthly) {
+    return current.monthly;
+  }
+  const packages = current.availablePackages ?? [];
+  const monthlyPkg = packages.find(
+    (pkg) => pkg.packageType === 'MONTHLY' || pkg.identifier === '$rc_monthly',
+  );
+  return monthlyPkg ?? packages[0] ?? null;
+}
+
+function formatPackagePriceText(pkg: PurchasesPackage): string | null {
+  const rawPrice = pkg.product?.priceString?.trim() ?? '';
+  if (!rawPrice) {
+    return null;
+  }
+  if (rawPrice.includes('/')) {
+    return rawPrice;
+  }
+  const period = pkg.product?.subscriptionPeriod;
+  if (pkg.packageType === 'MONTHLY' || pkg.identifier === '$rc_monthly' || period === 'P1M') {
+    return `${rawPrice} / month`;
+  }
+  if (pkg.packageType === 'ANNUAL' || pkg.identifier === '$rc_annual' || period === 'P1Y') {
+    return `${rawPrice} / year`;
+  }
+  if (pkg.packageType === 'WEEKLY' || pkg.identifier === '$rc_weekly' || period === 'P1W') {
+    return `${rawPrice} / week`;
+  }
+  return rawPrice;
+}
+
+export async function getFamilyOffer(): Promise<FamilyOfferInfo> {
+  const offerings = await Purchases.getOfferings();
+  const pkg = selectFamilyPackage(offerings);
+  if (!pkg) {
+    return { priceText: null, hasIntroOffer: false };
+  }
+  const priceText = formatPackagePriceText(pkg);
+  const hasIntroOffer = Boolean(
+    pkg.product?.introPrice ||
+      pkg.product?.defaultOption?.freePhase ||
+      pkg.product?.defaultOption?.introPhase,
+  );
+  return { priceText, hasIntroOffer };
+}
+
+// Final Terms of Use and Privacy Policy URLs will be supplied by Taha before CC-8 / store release.
+// Keeping them in one table + helper makes pointing the paywall links at the live URLs a 2-line change.
+export const PAYWALL_LEGAL_URLS: {
+  terms: string | null;
+  privacy: string | null;
+} = {
+  terms: null,
+  privacy: null,
+};
+
+export async function openPaywallLegalLink(
+  kind: 'terms' | 'privacy',
+  openUrl: (url: string) => Promise<unknown> = (url) => Linking.openURL(url),
+): Promise<boolean> {
+  const targetUrl = PAYWALL_LEGAL_URLS[kind]?.trim();
+  if (!targetUrl) {
+    return false;
+  }
+  await openUrl(targetUrl);
+  return true;
+}
+
 export function createRevenueCatSdkAdapter(): RevenueCatSdkAdapter {
   return {
     async logIn(appUserId: string): Promise<void> {
@@ -121,7 +209,7 @@ export function createRevenueCatSdkAdapter(): RevenueCatSdkAdapter {
 
     async purchaseFamilyPackage() {
       const offerings = await Purchases.getOfferings();
-      const pkg = offerings.current?.availablePackages?.[0];
+      const pkg = selectFamilyPackage(offerings);
       if (!pkg) {
         throw new Error('NO_OFFERING_AVAILABLE');
       }

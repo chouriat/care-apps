@@ -1,4 +1,5 @@
-# F-4: email magic-link sign-in reaches the signed-in placeholder (iOS and Android).
+# F-4 + CC-1a: a new user signs in with an email magic link, lands on /(onboarding)/start,
+# creates a circle, and lands on an empty Today screen (iOS and Android).
 # Needs the local Supabase stack with Mailpit (`pnpm db:start`), carecircle://auth/callback in
 # auth.additional_redirect_urls, and a dev build whose Supabase URL reaches that stack
 # (http://10.0.2.2:54321 on the Android emulator). Run: maestro test apps/carecircle/maestro/
@@ -24,7 +25,19 @@ env:
     commands:
       - runScript: scripts/magic-link-from-mailpit.js
 - openLink: ${output.callbackUrl}
-- assertVisible: 'CareCircle'
-- assertVisible: 'Shared family care plan shell ready.'
+- assertVisible:
+    id: 'onboarding-start-screen'
 - assertNotVisible:
     id: 'sign-in-screen'
+- tapOn:
+    id: 'onboarding-circle-name-input'
+- inputText: 'Family Care'
+- hideKeyboard
+- tapOn:
+    id: 'onboarding-recipient-name-input'
+- inputText: 'Evelyn'
+- hideKeyboard
+- tapOn:
+    id: 'onboarding-submit-button'
+- assertVisible:
+    id: 'today-empty-state'

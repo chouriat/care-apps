@@ -2,6 +2,7 @@ import { Button, Card, ErrorState, MIN_TOUCH_TARGET_PT, Sheet, useTheme } from '
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import en from '../../../../i18n/en.json';
+import { openPaywallLegalLink } from '../api';
 
 // Apple App Store Review Guideline 3.1.2(c) (Auto-Renewable Subscriptions):
 // subscription paywalls must clearly display the billed price and billing period (`priceText`,
@@ -18,7 +19,8 @@ export interface PaywallSheetProps {
   isOffline?: boolean;
   hasError?: boolean;
   isActive?: boolean;
-  priceText?: string;
+  priceText?: string | null;
+  hasIntroOffer?: boolean;
   onOpenTerms?: () => void;
   onOpenPrivacy?: () => void;
 }
@@ -34,6 +36,7 @@ export function PaywallSheet({
   hasError = false,
   isActive = false,
   priceText,
+  hasIntroOffer = false,
   onOpenTerms,
   onOpenPrivacy,
 }: PaywallSheetProps) {
@@ -174,8 +177,10 @@ export function PaywallSheet({
             ) : null}
 
             <Button
-              label={en.paywall.subscribeCta}
-              accessibilityLabel={en.paywall.subscribeA11y}
+              label={hasIntroOffer ? en.paywall.startFreeTrialCta : en.paywall.subscribeCta}
+              accessibilityLabel={
+                hasIntroOffer ? en.paywall.startFreeTrialA11y : en.paywall.subscribeA11y
+              }
               disabled={isActionBlocked}
               onPress={() => {
                 void handlePurchase();
@@ -196,7 +201,13 @@ export function PaywallSheet({
               <Pressable
                 accessibilityRole="link"
                 accessibilityLabel={en.paywall.termsA11y}
-                onPress={onOpenTerms}
+                onPress={() => {
+                  if (onOpenTerms) {
+                    onOpenTerms();
+                  } else {
+                    void openPaywallLegalLink('terms');
+                  }
+                }}
                 style={styles.legalLink}
               >
                 <Text
@@ -214,7 +225,13 @@ export function PaywallSheet({
               <Pressable
                 accessibilityRole="link"
                 accessibilityLabel={en.paywall.privacyA11y}
-                onPress={onOpenPrivacy}
+                onPress={() => {
+                  if (onOpenPrivacy) {
+                    onOpenPrivacy();
+                  } else {
+                    void openPaywallLegalLink('privacy');
+                  }
+                }}
                 style={styles.legalLink}
               >
                 <Text
