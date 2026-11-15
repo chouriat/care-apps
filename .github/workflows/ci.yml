@@ -61,7 +61,8 @@ jobs:
       - name: Stage CareCircle Supabase workdir and run supabase start
         run: |
           WORKDIR="$(node supabase/carecircle/cli.mjs stage)"
-          supabase start --workdir "$WORKDIR" --exclude studio,imgproxy,logflare,vector,edge-runtime,mailpit
+          # Keep storage-api enabled in the db job so pgTAP tests can verify Storage buckets and RLS policies.
+          supabase start --workdir "$WORKDIR" --exclude studio,imgproxy,logflare,vector,edge-runtime,mailpit,realtime,postgres-meta,supavisor
       - name: Run pgTAP database tests
         run: pnpm test:db
 

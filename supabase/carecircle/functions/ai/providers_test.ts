@@ -1,4 +1,8 @@
-import { createAiGatewayHandler, type AiCallLogRow, type AiGatewayDeps } from './handler.ts';
+import {
+  createAiGatewayHandler as createRealAiGatewayHandler,
+  type AiCallLogRow,
+  type AiGatewayDeps,
+} from './handler.ts';
 import { PROMPTS } from './prompts.ts';
 import {
   FAKE_FIXTURES,
@@ -11,6 +15,21 @@ import {
   type AiRouteConfig,
   type AiTaskName,
 } from './routes.ts';
+
+// CC-4a: extractPrescription now checks circle access and reads the photo from Storage before calling a
+// provider (tests in rx_storage_auth_test.ts). These older tests are about routing, logging and providers,
+// so by default they run with an allowed caller and a small JPEG; a test can still pass its own hooks.
+const RX_IMAGE_PATH =
+  'cc4ac001-0000-4000-8000-000000000001/11111111-1111-4111-8111-111111111111.jpg';
+const createAiGatewayHandler = (deps: AiGatewayDeps = {}) =>
+  createRealAiGatewayHandler({
+    checkPrescriptionCircleAccess: async () => true,
+    readPrescriptionPhoto: async () => ({
+      bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+      contentType: 'image/jpeg',
+    }),
+    ...deps,
+  } as AiGatewayDeps);
 
 const USER_A = '11111111-1111-4111-8111-111111111111';
 const USER_B = '99999999-9999-4999-8999-999999999999';
@@ -86,7 +105,7 @@ async function postAi(
   };
   const handler = createAiGatewayHandler(mergedDeps as AiGatewayDeps);
   const task = opts.task ?? 'carecircle.extractPrescription';
-  const input = opts.input ?? { imagePath: 'rx.jpg' };
+  const input = opts.input ?? { imagePath: RX_IMAGE_PATH };
   const req = new Request('http://localhost/functions/v1/ai', {
     method: 'POST',
     headers: {
@@ -871,7 +890,7 @@ Deno.test(
               [task]: { provider, model: `${provider}/test-model`, promptVersion: 'v1' },
             },
           },
-          { task, input: { text: injectionText, imagePath: 'rx.jpg' } },
+          { task, input: { text: injectionText, imagePath: RX_IMAGE_PATH } },
         );
         assert(body.ok === true, `${task} on ${provider} must succeed`);
         assert(capturedCalls.length === 1, 'expected one HTTP request');
