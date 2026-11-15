@@ -1,4 +1,5 @@
 export { camelToSnake, snakeToCamel } from '../case';
+export * from '../schemas/carecircle';
 export {
   ALLOWED_ANALYTICS_EVENTS,
   AnalyticsValidationError,
@@ -58,3 +59,16 @@ export {
   type PushTokenStoreAdapter,
   type ScheduledLocalReminder,
 } from './notifications';
+export {
+  CARECIRCLE_FAMILY_ENTITLEMENT,
+  createPaywallController,
+  type CareCircleEntitlementId,
+  type EntitlementReadStore,
+  type EntitlementRow,
+  type PaywallAnalytics,
+  type PaywallController,
+  type PaywallControllerDeps,
+  type PaywallLogger,
+  type PaywallState,
+  type RevenueCatSdkAdapter,
+} from './paywall';

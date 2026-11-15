@@ -96,5 +96,25 @@
     "missedDoseBody": "Open CareCircle to check the care plan.",
     "taskReminderTitle": "Care task reminder",
     "taskReminderBody": "Open CareCircle to view your care task."
+  },
+  "paywall": {
+    "title": "CareCircle Family Plan",
+    "subtitle": "Invite up to 8 family members, unlock AI visit-note summaries, and export care log PDFs.",
+    "subscribeCta": "Subscribe to the Family plan",
+    "subscribeA11y": "Subscribe to the CareCircle Family plan",
+    "restoreCta": "Restore purchases",
+    "restoreA11y": "Restore previous purchases",
+    "termsLabel": "Terms of Use",
+    "termsA11y": "Open Terms of Use",
+    "privacyLabel": "Privacy Policy",
+    "privacyA11y": "Open Privacy Policy",
+    "loading": "Checking your Family plan...",
+    "activeTitle": "CareCircle Family plan is active",
+    "activeBody": "Your family circle has full access to up to 8 members, AI visit-note summaries, and PDF exports.",
+    "errorTitle": "Unable to complete purchase",
+    "errorMessage": "We could not connect to the store right now. Please try again.",
+    "offlineTitle": "You are offline",
+    "offlineMessage": "Purchases and restores require an internet connection. Reconnect and try again.",
+    "retry": "Try again"
   }
 }

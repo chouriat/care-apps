@@ -5,6 +5,7 @@
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
+    "start:mocks": "EXPO_PUBLIC_MOCKS=1 expo start",
     "ios": "expo run:ios",
     "android": "expo run:android",
     "typecheck": "tsc --noEmit",
@@ -34,6 +35,7 @@
     "react-dom": "19.3.0",
     "react-hook-form": "7.54.2",
     "react-native": "0.88.1",
+    "react-native-purchases": "^11.0.2",
     "react-native-safe-area-context": "~5.11.1",
     "react-native-screens": "~4.30.1",
     "zod": "3.24.1",

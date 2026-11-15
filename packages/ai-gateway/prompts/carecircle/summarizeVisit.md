@@ -15,13 +15,13 @@ Return a JSON object with all of the following required top-level fields:
 - `summary` (`string`, non-empty): A plain-language summary of the visit in 3 to 6 sentences suitable for sharing with family caregivers.
 - `followUps` (`array` of objects): Follow-up tasks or appointments mentioned during the visit. Each item has:
   - `title` (`string`, non-empty): Short actionable description (for example, `"Book blood test"`).
-  - `dueHint` (`string | null`, optional): Relative timing phrase mentioned in the visit (for example, `"in 2 weeks"`), or `null` if none.
-  - `dueDate` (`string | null`, optional): ISO calendar date `"YYYY-MM-DD"` only when the visit input states a specific calendar date. You do not know today's date, so never compute a date from a relative phrase such as "in 2 weeks"; put that phrase in `dueHint` and set `dueDate` to `null`.
+  - `dueHint` (`string | null`, always present): Relative timing phrase mentioned in the visit (for example, `"in 2 weeks"`), or `null` if none.
+  - `dueDate` (`string | null`, always present): ISO calendar date `"YYYY-MM-DD"` only when the visit input states a specific calendar date. You do not know today's date, so never compute a date from a relative phrase such as "in 2 weeks"; put that phrase in `dueHint` and set `dueDate` to `null`.
 - `medChanges` (`array` of objects): Medication changes discussed during the visit. Each item has:
   - `action` (`"start" | "stop" | "change_dose"`): Must be exactly one of `"start"`, `"stop"`, or `"change_dose"`.
   - `medicationId` (`string | null`):
     - When `action` is `"start"`, `medicationId` MUST be `null`.
-    - When `action` is `"stop"` or `"change_dose"`, set `medicationId` to the matching `id` from `knownMeds` in `<user_input_data>`, or `null` if no known medication matches.
+    - When `action` is `"stop"` or `"change_dose"`, `medicationId` MUST be the matching `id` from `knownMeds` in `<user_input_data>`. If no known medication matches, do not add the item to `medChanges`; mention the change in `summary` and add a question to `questionsToAsk` instead.
   - `name` (`string`, non-empty): Name of the medication (for example, `"Aspirin"`).
-  - `detail` (`string | null`, optional): Plain-language explanation of the change (for example, `"Stop until next visit"`).
+  - `detail` (`string | null`, always present): Plain-language explanation of the change (for example, `"Stop until next visit"`).
 - `questionsToAsk` (`array` of `string`): Concrete, plain-language questions the family may want to ask the clinician at the next follow-up based on the visit discussion.
