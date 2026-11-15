@@ -10,9 +10,6 @@
       "environment": "development",
       "android": {
         "buildType": "apk"
-      },
-      "env": {
-        "EXPO_PUBLIC_SUPABASE_URL": "http://10.0.2.2:54321"
       }
     },
     "preview": {

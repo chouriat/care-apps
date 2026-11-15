@@ -67,7 +67,8 @@ jobs:
 
   maestro:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # The release build (about 15 min) and the emulator boot take most of this.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -81,7 +82,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      # No android-actions/setup-android: ubuntu-latest already has the Android SDK (ANDROID_HOME),
+      # and that action failed here installing the removed 'tools' package before anything ran.
       - uses: gradle/actions/setup-gradle@v4
       - uses: supabase/setup-cli@v3
         with:
@@ -136,3 +138,10 @@ jobs:
             adb wait-for-device
             adb install -r apps/carecircle/android/app/build/outputs/apk/release/app-release.apk
             maestro test apps/carecircle/maestro/sign-in-magic-link.yaml
+      - name: Keep Maestro screenshots and logs when the flow fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maestro-debug
+          path: ~/.maestro/tests/
+          if-no-files-found: ignore

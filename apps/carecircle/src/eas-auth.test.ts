@@ -1,5 +1,4 @@
 import { AppState, type AppStateStatus } from 'react-native';
-import rootEasConfig from '../../../eas.json';
 import appEasConfig from '../eas.json';
 import {
   getSupabaseClient,
@@ -27,14 +26,18 @@ describe('F-8 EAS profiles and Supabase client configuration (apps/carecircle)',
     jest.restoreAllMocks();
   });
 
-  it('defines matching development and preview Android APK profiles in eas.json', () => {
-    expect(appEasConfig).toEqual(rootEasConfig);
+  it('defines development and preview Android APK profiles in eas.json', () => {
     expect(appEasConfig.build.development).toMatchObject({
       developmentClient: true,
       distribution: 'internal',
       environment: 'development',
       android: { buildType: 'apk' },
     });
+    // A Supabase URL baked into a profile would override apps/carecircle/.env and point real
+    // phones and the iOS simulator at the Android emulator's host address.
+    for (const profile of Object.values(appEasConfig.build)) {
+      expect(JSON.stringify(profile)).not.toMatch(/EXPO_PUBLIC_SUPABASE/);
+    }
     expect(appEasConfig.build.preview).toMatchObject({
       distribution: 'internal',
       environment: 'preview',
