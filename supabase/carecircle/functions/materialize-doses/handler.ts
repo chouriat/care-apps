@@ -26,7 +26,11 @@ export interface DoseEventInsertRow {
 }
 
 export interface MaterializeDosesStore {
-  listActiveMedications(): Promise<ActiveMedicationWithTimezoneRow[]>;
+  /**
+   * Every active medication with its circle's time zone. With `medicationId`, only that one
+   * (looked up directly, so it is found however many medicines exist).
+   */
+  listActiveMedications(medicationId?: string): Promise<ActiveMedicationWithTimezoneRow[]>;
   insertPendingDoseEvents(rows: DoseEventInsertRow[]): Promise<{ inserted: number }>;
   deleteFuturePendingDoseEventsForMedication?(
     medicationId: string,
@@ -145,7 +149,7 @@ export function createMaterializeDosesHandler(
 
     let allMeds: ActiveMedicationWithTimezoneRow[];
     try {
-      allMeds = await deps.store.listActiveMedications();
+      allMeds = await deps.store.listActiveMedications(filterMedicationId ?? undefined);
     } catch {
       console.info(
         JSON.stringify({
