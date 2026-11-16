@@ -13,7 +13,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, storage, extensions;
 
-select plan(45);
+select plan(44);
 
 -- 1. Bucket `visit-audio` configuration
 select is(
