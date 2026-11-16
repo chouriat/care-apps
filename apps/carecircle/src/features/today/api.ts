@@ -27,6 +27,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { File, Paths } from 'expo-file-system';
 import { z } from 'zod';
 import { getSupabaseClient } from '../auth/api';
+import { fetchSignedInMemberRole } from '../circle/api';
 import { loadCareCircleMocks, type CareCircleMocks } from '../mocks';
 import { getAppObservability } from '../observability/api';
 
@@ -603,12 +604,8 @@ export async function loadTodaySnapshot(deps: TodayDeps = {}): Promise<LoadToday
     // The role must be the signed-in user's own row. Every member can read every member row of
     // the circle, so "the first row" is often someone else's role (a viewer would get the
     // owner's Given and Skip buttons).
-    const [membersRes, medsRes, dosesRes, apptsRes, tasksRes] = await Promise.all([
-      client
-        .from('circle_members')
-        .select('role')
-        .eq('circle_id', circle.id)
-        .eq('user_id', userId ?? '00000000-0000-0000-0000-000000000000'),
+    const [roleRes, medsRes, dosesRes, apptsRes, tasksRes] = await Promise.all([
+      fetchSignedInMemberRole(client, circle.id, userId),
       client.from('medications').select('*').eq('circle_id', circle.id),
       client
         .from('dose_events')
@@ -620,17 +617,16 @@ export async function loadTodaySnapshot(deps: TodayDeps = {}): Promise<LoadToday
       client.from('tasks').select('*').eq('circle_id', circle.id),
     ]);
 
-    for (const res of [membersRes, medsRes, dosesRes, apptsRes, tasksRes]) {
+    if (roleRes.error) {
+      throw new Error(roleRes.error.message);
+    }
+    for (const res of [medsRes, dosesRes, apptsRes, tasksRes]) {
       if (res.error) {
         throw new Error(res.error.message);
       }
     }
 
-    const memberRows = Array.isArray(membersRes.data) ? membersRes.data : [];
-    const firstRole = (memberRows[0] as { role?: unknown } | undefined)?.role;
-    const roleParsed = memberRoleSchema.safeParse(firstRole);
-    // Unknown role: show no edit buttons. The server refuses writes anyway.
-    const memberRole: MemberRole = roleParsed.success ? roleParsed.data : 'viewer';
+    const memberRole: MemberRole = roleRes.role;
 
     const medications = (Array.isArray(medsRes.data) ? medsRes.data : []).map((row) =>
       medicationFromRow(medicationRowSchema.parse(row)),
