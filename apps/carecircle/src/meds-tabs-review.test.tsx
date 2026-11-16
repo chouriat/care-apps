@@ -122,7 +122,6 @@ beforeEach(() => {
   delete process.env.EXPO_PUBLIC_MOCKS;
 });
 
-
 describe('CC-3b follow-up: tab bar, scan button and the way back (PR #37 review)', () => {
   it('opens on Today with exactly two tabs, Today and Medications, and the Meds tab opens Meds', async () => {
     const { routes } = setup(ownerId);
