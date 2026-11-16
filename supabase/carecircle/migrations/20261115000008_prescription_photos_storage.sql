@@ -43,7 +43,7 @@ begin
     return null;
   end if;
 
-  return pg_catalog.substring(p_name from 1 for 36)::uuid;
+  return pg_catalog.substr(p_name, 1, 36)::uuid;
 end;
 $$;
 
