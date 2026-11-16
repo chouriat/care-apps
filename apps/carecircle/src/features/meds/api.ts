@@ -26,6 +26,7 @@ import {
   loadTodaySnapshot,
   type TodayDeps,
 } from '../today/api';
+import { requestTodayReload } from '../today/refresh';
 
 const SEVEN_DAYS_MS = 7 * 86_400_000;
 const ISO_DATE_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
@@ -209,6 +210,18 @@ async function fetchSignedInRole(
   const firstRole = (rows[0] as { role?: unknown } | undefined)?.role;
   const parsed = memberRoleSchema.safeParse(firstRole);
   return { role: parsed.success ? parsed.data : 'viewer', error: null };
+}
+
+// The server has already saved the change when this runs. Refreshing Today's offline copy and
+// telling the Today screen to reload must never turn that success into "Not saved": the person
+// would tap Save again and the medicine would be added twice.
+async function refreshTodayAfterSave(deps: MedsDeps): Promise<void> {
+  try {
+    await loadTodaySnapshot(deps);
+  } catch {
+    // Today reloads by itself on its next open, foreground or retry.
+  }
+  requestTodayReload();
 }
 
 function defaultTrackMedAdded(): void {
@@ -414,7 +427,7 @@ export async function addMedication(
     };
     snapshot.medications.push(created);
     trackMedAdded();
-    await loadTodaySnapshot(deps);
+    await refreshTodayAfterSave(deps);
     return { ok: true, medication: created };
   }
 
@@ -431,7 +444,9 @@ export async function addMedication(
         dose_text: parsed.data.doseText,
         schedule: parsed.data.schedule,
         instructions: parsed.data.instructions ?? null,
-        start_date: parsed.data.startDate ?? null,
+        // No start date typed: leave it out so the database default (today) applies. Sending
+        // null would store a medicine with no start date.
+        ...(parsed.data.startDate ? { start_date: parsed.data.startDate } : {}),
         end_date: parsed.data.endDate ?? null,
         active: true,
         source: 'manual',
@@ -454,7 +469,7 @@ export async function addMedication(
 
     const medication = medicationFromRow(medicationRowSchema.parse(rows[0]));
     trackMedAdded();
-    await loadTodaySnapshot(deps);
+    await refreshTodayAfterSave(deps);
     return { ok: true, medication };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -526,7 +541,7 @@ export async function updateMedication(
       endDate: parsed.data.endDate ?? null,
     };
     snapshot.medications[idx] = updated;
-    await loadTodaySnapshot(deps);
+    await refreshTodayAfterSave(deps);
     return { ok: true, medication: updated };
   }
 
@@ -542,7 +557,7 @@ export async function updateMedication(
         dose_text: parsed.data.doseText,
         schedule: parsed.data.schedule,
         instructions: parsed.data.instructions ?? null,
-        start_date: parsed.data.startDate ?? null,
+        ...(parsed.data.startDate ? { start_date: parsed.data.startDate } : {}),
         end_date: parsed.data.endDate ?? null,
       })
       .eq('circle_id', parsed.data.circleId)
@@ -564,7 +579,7 @@ export async function updateMedication(
     }
 
     const medication = medicationFromRow(medicationRowSchema.parse(rows[0]));
-    await loadTodaySnapshot(deps);
+    await refreshTodayAfterSave(deps);
     return { ok: true, medication };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -605,7 +620,7 @@ export async function pauseMedication(
       return { ok: false, errorCode: 'SAVE_MED_FAILED', isOffline: false };
     }
     target.active = false;
-    await loadTodaySnapshot(deps);
+    await refreshTodayAfterSave(deps);
     return { ok: true };
   }
 
@@ -634,7 +649,7 @@ export async function pauseMedication(
       return { ok: false, errorCode: 'SAVE_MED_FAILED', isOffline: false };
     }
 
-    await loadTodaySnapshot(deps);
+    await refreshTodayAfterSave(deps);
     return { ok: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

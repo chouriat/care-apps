@@ -53,6 +53,20 @@ export default function MedsScreen({ deps }: MedsRouteProps = {}) {
     void reload();
   }, [reload]);
 
+  // After a confirmed save: reload without the full-screen spinner.
+  const refreshList = useCallback(async () => {
+    const res = await loadMedicationsScreen(deps);
+    if (res.ok) {
+      setItems(res.items);
+      setMemberRole(res.memberRole);
+      setIsOffline(res.isOffline);
+      setHasError(false);
+    } else {
+      setIsOffline(res.isOffline);
+      setHasError(!res.isOffline);
+    }
+  }, [deps]);
+
   const handleSaveMedication = useCallback(
     async (
       payload: ValidatedMedicationFormPayload,
@@ -86,18 +100,13 @@ export default function MedsScreen({ deps }: MedsRouteProps = {}) {
         return false;
       }
 
-      // Reload from the server before showing the change as saved.
-      const reloaded = await loadMedicationsScreen(deps);
-      if (reloaded.ok) {
-        setItems(reloaded.items);
-        setMemberRole(reloaded.memberRole);
-        return true;
-      }
-
-      setNotSavedNotice(true);
-      return false;
+      // The server confirmed the save. Show the list as the server has it now. If only this
+      // reload fails, the change IS saved: close the form and show the load error, never
+      // "Not saved" (the person would tap Save again and add the medicine twice).
+      await refreshList();
+      return true;
     },
-    [circleId, deps, memberRole],
+    [circleId, deps, memberRole, refreshList],
   );
 
   const handlePauseMedication = useCallback(
@@ -120,17 +129,10 @@ export default function MedsScreen({ deps }: MedsRouteProps = {}) {
         return false;
       }
 
-      const reloaded = await loadMedicationsScreen(deps);
-      if (reloaded.ok) {
-        setItems(reloaded.items);
-        setMemberRole(reloaded.memberRole);
-        return true;
-      }
-
-      setNotSavedNotice(true);
-      return false;
+      await refreshList();
+      return true;
     },
-    [circleId, deps, memberRole],
+    [circleId, deps, memberRole, refreshList],
   );
 
   return (

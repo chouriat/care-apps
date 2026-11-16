@@ -13,6 +13,7 @@ import {
   type TodaySnapshot,
 } from '../../src/features/today/api';
 import { TodayScreenView, type TodayNotice } from '../../src/features/today/components';
+import { onTodayReloadRequested } from '../../src/features/today/refresh';
 
 /** While offline or with check-offs waiting, try again this often. */
 export const TODAY_RETRY_INTERVAL_MS = 30_000;
@@ -92,6 +93,9 @@ export default function TodayScreen({ deps, referenceNow }: TodayRouteProps = {}
   const handleRetry = useCallback(() => {
     setReloadToken((n) => n + 1);
   }, []);
+
+  // A medicine was added, edited or paused on the Meds screen: the doses may have changed.
+  useEffect(() => onTodayReloadRequested(handleRetry), [handleRetry]);
 
   // "Sent when the network returns": the app has no network listener, so try again when the app
   // comes back to the foreground, and every 30 seconds while offline or while check-offs wait.
