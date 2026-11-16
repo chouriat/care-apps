@@ -567,3 +567,221 @@ Deno.test(
     );
   },
 );
+
+// ---------------------------------------------------------------------------------------------
+// Review additions (Claude): failures at every step are reported, never hidden, and every push
+// carries exactly the ids of its own dose.
+
+function overdueDose(id: string, circleId: string, medicationId: string): OverdueDoseRow {
+  return {
+    id,
+    medication_id: medicationId,
+    circle_id: circleId,
+    due_at: '2026-11-15T10:30:00.000Z',
+    status: 'pending',
+    acted_by: null,
+    acted_at: null,
+  };
+}
+
+const TWO_CIRCLE_MEMBERS: CircleMemberRoleRow[] = [
+  { circle_id: CIRCLE_A, user_id: OWNER_A, role: 'owner' },
+  { circle_id: CIRCLE_A, user_id: HELPER_A1, role: 'helper' },
+  { circle_id: CIRCLE_A, user_id: VIEWER_A, role: 'viewer' },
+  { circle_id: CIRCLE_B, user_id: OWNER_B, role: 'owner' },
+  { circle_id: CIRCLE_B, user_id: HELPER_B, role: 'helper' },
+];
+
+const DOSE_A2 = 'c2b3000a-0000-4000-8000-00000000000a';
+const DOSE_B1 = 'c2b3000b-0000-4000-8000-00000000000b';
+
+Deno.test(
+  'each push carries exactly its own dose (type, circleId, doseEventId, medicationId), goes only to that circle, and has the same neutral title and body',
+  async () => {
+    const { createMarkMissedHandler } = await loadHandlerModule();
+    const { pushCalls, store, sendPush } = createFakeEnvironment(
+      [
+        overdueDose(DOSE_EXACT_60M, CIRCLE_A, MED_A),
+        overdueDose(DOSE_A2, CIRCLE_A, MED_B),
+        overdueDose(DOSE_B1, CIRCLE_B, MED_B),
+      ],
+      TWO_CIRCLE_MEMBERS,
+    );
+    const handler = createMarkMissedHandler({
+      cronSecret: CRON_SECRET,
+      now: () => new Date('2026-11-15T12:00:00.000Z'),
+      store,
+      sendPush,
+    });
+
+    const res = await handler(cronPostRequest());
+    const body = (await res.json()) as { ok: boolean; missed: number };
+    assert(res.status === 200 && body.ok === true && body.missed === 3, JSON.stringify(body));
+    assert(
+      pushCalls.length === 3,
+      `expected one push per missed dose (3), got ${pushCalls.length}`,
+    );
+
+    const expected: Record<string, { circleId: string; medicationId: string; users: string[] }> = {
+      [DOSE_EXACT_60M]: { circleId: CIRCLE_A, medicationId: MED_A, users: [OWNER_A, HELPER_A1] },
+      [DOSE_A2]: { circleId: CIRCLE_A, medicationId: MED_B, users: [OWNER_A, HELPER_A1] },
+      [DOSE_B1]: { circleId: CIRCLE_B, medicationId: MED_B, users: [OWNER_B, HELPER_B] },
+    };
+    for (const call of pushCalls) {
+      const want = expected[call.data.doseEventId];
+      assert(want !== undefined, `unexpected push for ${call.data.doseEventId}`);
+      assert(
+        JSON.stringify(call.data) ===
+          JSON.stringify({
+            type: 'missed_dose',
+            circleId: want.circleId,
+            doseEventId: call.data.doseEventId,
+            medicationId: want.medicationId,
+          }),
+        `push data must be exactly { type, circleId, doseEventId, medicationId } of its dose, got ${JSON.stringify(call.data)}`,
+      );
+      assert(
+        JSON.stringify([...call.userIds].sort()) === JSON.stringify([...want.users].sort()),
+        `push for ${call.data.doseEventId} must go to its own circle's owner and helpers, got ${JSON.stringify(call.userIds)}`,
+      );
+      assert(
+        call.title.trim().length > 0 && call.body.trim().length > 0,
+        'title and body are not empty',
+      );
+      for (const id of [call.data.circleId, call.data.doseEventId, call.data.medicationId]) {
+        assert(
+          !call.title.includes(id) && !call.body.includes(id),
+          'title and body contain no ids',
+        );
+      }
+    }
+    assert(
+      new Set(pushCalls.map((c) => `${c.title}\u0000${c.body}`)).size === 1,
+      'every missed-dose push has the same fixed title and body (nothing about the medicine)',
+    );
+  },
+);
+
+Deno.test(
+  'a push that send-push refuses (ok: false) or that throws is counted as a failure: the run answers 500 with ok: false and still handles the other doses',
+  async () => {
+    const { createMarkMissedHandler } = await loadHandlerModule();
+    for (const mode of ['refused', 'throws'] as const) {
+      const { doses, store } = createFakeEnvironment(
+        [overdueDose(DOSE_EXACT_60M, CIRCLE_A, MED_A), overdueDose(DOSE_B1, CIRCLE_B, MED_B)],
+        TWO_CIRCLE_MEMBERS,
+      );
+      const delivered: string[] = [];
+      const handler = createMarkMissedHandler({
+        cronSecret: CRON_SECRET,
+        now: () => new Date('2026-11-15T12:00:00.000Z'),
+        store,
+        sendPush: (payload) => {
+          if (payload.data.circleId === CIRCLE_A) {
+            if (mode === 'throws') return Promise.reject(new Error('network down'));
+            return Promise.resolve({ ok: false });
+          }
+          delivered.push(payload.data.doseEventId);
+          return Promise.resolve({ ok: true, sent: payload.userIds.length });
+        },
+      });
+
+      const res = await handler(cronPostRequest());
+      const body = (await res.json()) as { ok: boolean; failed: number };
+      assert(res.status === 500, `${mode}: expected 500, got ${res.status}`);
+      assert(
+        body.ok === false && body.failed >= 1,
+        `${mode}: expected ok: false and failed >= 1, got ${JSON.stringify(body)}`,
+      );
+      assert(
+        JSON.stringify(delivered) === JSON.stringify([DOSE_B1]),
+        `${mode}: circle B's push is still sent, got ${JSON.stringify(delivered)}`,
+      );
+      assert(
+        doses.every((d) => d.status === 'missed'),
+        `${mode}: both doses are marked missed`,
+      );
+    }
+  },
+);
+
+Deno.test(
+  'a dose whose update fails is a failure (500, ok: false) and does not stop the other doses',
+  async () => {
+    const { createMarkMissedHandler } = await loadHandlerModule();
+    const { doses, pushCalls, store, sendPush } = createFakeEnvironment(
+      [overdueDose(DOSE_EXACT_60M, CIRCLE_A, MED_A), overdueDose(DOSE_B1, CIRCLE_B, MED_B)],
+      TWO_CIRCLE_MEMBERS,
+    );
+    const failingStore: MarkMissedStore = {
+      ...store,
+      markDoseMissedIfPending(doseEventId: string) {
+        if (doseEventId === DOSE_EXACT_60M) return Promise.reject(new Error('HTTP 503'));
+        return store.markDoseMissedIfPending(doseEventId);
+      },
+    };
+    const handler = createMarkMissedHandler({
+      cronSecret: CRON_SECRET,
+      now: () => new Date('2026-11-15T12:00:00.000Z'),
+      store: failingStore,
+      sendPush,
+    });
+
+    const res = await handler(cronPostRequest());
+    const body = (await res.json()) as { ok: boolean; failed: number };
+    assert(res.status === 500 && body.ok === false && body.failed >= 1, JSON.stringify(body));
+    assert(doses[0]!.status === 'pending', 'the dose whose update failed stays pending');
+    assert(doses[1]!.status === 'missed', 'the other dose is still marked missed');
+    assert(
+      pushCalls.length === 1 && pushCalls[0]!.data.doseEventId === DOSE_B1,
+      `only the dose that was marked is pushed, got ${JSON.stringify(pushCalls.map((c) => c.data.doseEventId))}`,
+    );
+  },
+);
+
+Deno.test(
+  'when the overdue list cannot be read, the run answers 500 with ok: false and pushes nothing',
+  async () => {
+    const { createMarkMissedHandler } = await loadHandlerModule();
+    const { pushCalls, store, sendPush } = createFakeEnvironment([], TWO_CIRCLE_MEMBERS);
+    const handler = createMarkMissedHandler({
+      cronSecret: CRON_SECRET,
+      now: () => new Date('2026-11-15T12:00:00.000Z'),
+      store: { ...store, listOverduePendingDoses: () => Promise.reject(new Error('HTTP 500')) },
+      sendPush,
+    });
+
+    const res = await handler(cronPostRequest());
+    assert(res.status === 500, `expected 500, got ${res.status}`);
+    const body = (await res.json()) as { ok: boolean };
+    assert(body.ok === false, `expected ok: false, got ${JSON.stringify(body)}`);
+    assert(pushCalls.length === 0, 'no push is sent');
+  },
+);
+
+Deno.test(
+  'the cutoff passed to the store is exactly now - 60 minutes, as an ISO string',
+  async () => {
+    const { createMarkMissedHandler } = await loadHandlerModule();
+    const { store, sendPush } = createFakeEnvironment([], []);
+    const cutoffs: string[] = [];
+    const handler = createMarkMissedHandler({
+      cronSecret: CRON_SECRET,
+      now: () => new Date('2026-11-15T12:00:00.000Z'),
+      store: {
+        ...store,
+        listOverduePendingDoses: (cutoffIso: string) => {
+          cutoffs.push(cutoffIso);
+          return store.listOverduePendingDoses(cutoffIso);
+        },
+      },
+      sendPush,
+    });
+    const res = await handler(cronPostRequest());
+    assert(res.status === 200, `expected 200, got ${res.status}`);
+    assert(
+      JSON.stringify(cutoffs) === JSON.stringify(['2026-11-15T11:00:00.000Z']),
+      `expected one call with 2026-11-15T11:00:00.000Z, got ${JSON.stringify(cutoffs)}`,
+    );
+  },
+);
