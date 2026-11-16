@@ -155,6 +155,30 @@
   "today": {
     "title": "Today",
     "emptyTitle": "Your care plan is ready",
-    "emptyMessage": "No doses, appointments, or tasks are scheduled for today yet."
+    "emptyMessage": "No doses, appointments, or tasks are scheduled for today yet.",
+    "loading": "Loading today's care plan...",
+    "errorTitle": "Could not load today's care plan",
+    "errorMessage": "We could not load your doses, appointments, and tasks. Please try again.",
+    "offlineTitle": "You are offline",
+    "offlineMessage": "Showing cached care plan. Dose check-offs are queued and will sync when you reconnect.",
+    "queuedSuffix": "queued for sync",
+    "syncNow": "Sync now",
+    "retry": "Try again",
+    "dosesHeading": "Doses due today",
+    "noDosesToday": "No doses scheduled for today.",
+    "nextAppointmentHeading": "Next appointment",
+    "noUpcomingAppointment": "No upcoming appointments scheduled.",
+    "tasksHeading": "Tasks due today",
+    "noTasksToday": "No open tasks due today.",
+    "markGiven": "Given",
+    "markSkipped": "Skip",
+    "statusPending": "Pending",
+    "statusGiven": "Given",
+    "statusSkipped": "Skipped",
+    "statusMissed": "Missed",
+    "checkOffFailedTitle": "Not saved",
+    "checkOffFailedMessage": "This check-off was not saved. The dose is shown as it was. Please try again.",
+    "refusedTitle": "Some check-offs were not saved",
+    "refusedMessage": "A check-off made offline could not be saved, for example because someone else recorded the dose first. Today now shows what was saved."
   }
 }

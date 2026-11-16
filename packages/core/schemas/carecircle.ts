@@ -478,7 +478,7 @@ export const CARECIRCLE_MOCKS = {
       id: 'c1500001-0000-4000-8000-000000000001',
       circleId: mockCircleId,
       title: 'Pick up Metformin refill',
-      dueAt: '2026-11-16T17:00:00.000Z',
+      dueAt: '2026-11-15T17:00:00.000Z',
       assignee: helperUserId,
       doneAt: null,
       doneBy: null,
