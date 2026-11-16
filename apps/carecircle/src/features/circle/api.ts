@@ -26,6 +26,7 @@ export type AcceptInviteErrorCode =
   | 'INVITE_USED'
   | 'CIRCLE_FULL'
   | 'CIRCLE_LIMIT_REACHED'
+  | 'PERMISSION_DENIED'
   | 'NETWORK_ERROR'
   | 'ACCEPT_INVITE_FAILED';
 
@@ -96,16 +97,33 @@ function isNetworkFailureMessage(message: string, code?: string): boolean {
   return /network|fetch failed|failed to fetch|offline|load failed/i.test(message);
 }
 
+// Analytics must never fail the action, whether it throws right away or rejects later.
 function defaultTrackInviteSent(role: InviteAssignableRole): void {
-  void getAppObservability()
-    .analytics.track('cc_invite_sent', { role })
-    .catch(() => undefined);
+  try {
+    void getAppObservability()
+      .analytics.track('cc_invite_sent', { role })
+      .catch(() => undefined);
+  } catch {
+    // ignore
+  }
 }
 
 function defaultTrackInviteAccepted(role?: InviteAssignableRole): void {
-  void getAppObservability()
-    .analytics.track('cc_invite_accepted', role ? { role } : {})
-    .catch(() => undefined);
+  try {
+    void getAppObservability()
+      .analytics.track('cc_invite_accepted', role ? { role } : {})
+      .catch(() => undefined);
+  } catch {
+    // ignore
+  }
+}
+
+function safeTrack(track: () => void): void {
+  try {
+    track();
+  } catch {
+    // An injected tracker that throws must not fail the action either.
+  }
 }
 
 export async function createInviteViaRpc(
@@ -180,7 +198,7 @@ export async function createInviteViaRpc(
       return { ok: false, errorCode: 'CREATE_INVITE_FAILED', isOffline: false };
     }
 
-    trackInviteSent(role);
+    safeTrack(() => trackInviteSent(role));
 
     return {
       ok: true,
@@ -241,6 +259,9 @@ export async function acceptInviteViaRpc(
       if (isNetworkFailureMessage(error.message, error.code)) {
         return { ok: false, errorCode: 'NETWORK_ERROR', isOffline: true };
       }
+      if (error.code === '42501') {
+        return { ok: false, errorCode: 'PERMISSION_DENIED', isOffline: false };
+      }
       if (error.message.includes('INVITE_INVALID')) {
         return { ok: false, errorCode: 'INVITE_INVALID', isOffline: false };
       }
@@ -272,7 +293,7 @@ export async function acceptInviteViaRpc(
     const role: InviteAssignableRole | undefined =
       rawRole === 'helper' || rawRole === 'viewer' ? rawRole : undefined;
 
-    trackInviteAccepted(role);
+    safeTrack(() => trackInviteAccepted(role));
 
     return {
       ok: true,

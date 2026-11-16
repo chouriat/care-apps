@@ -1,10 +1,22 @@
 // Maestro runScript (GraalJS, runs on the test machine, not on the device).
-// Reads the newest sign-in email for EMAIL from the local Supabase Mailpit, calls its
+// Reads the newest sign-in email (for EMAIL when the flow sets it) from the local Supabase Mailpit, calls its
 // verify link without following the redirect, and returns the app callback link
 // (carecircle://auth/callback?code=...) in output.callbackUrl for openLink.
 var mailpit = typeof MAILPIT_URL !== 'undefined' ? MAILPIT_URL : 'http://127.0.0.1:54324';
-var search = http.get(mailpit + '/api/v1/search?query=' + encodeURIComponent('to:' + EMAIL));
-var found = json(search.body).messages || [];
+// A flow names its address in EMAIL. A flow that signs in two people (invite-join-circle.yaml uses
+// OWNER_EMAIL and HELPER_EMAIL) empties Mailpit before each sign-in, so without EMAIL the newest
+// message is the one this sign-in just sent.
+var email = typeof EMAIL !== 'undefined' && EMAIL ? String(EMAIL) : '';
+var listUrl = email
+  ? mailpit + '/api/v1/search?query=' + encodeURIComponent('to:' + email)
+  : mailpit + '/api/v1/messages?limit=1';
+// The email can take a moment to arrive and Maestro's retry does not wait between tries, so poll
+// for up to 10 seconds here.
+var found = [];
+var deadline = Date.now() + 10000;
+while (found.length === 0 && Date.now() < deadline) {
+  found = json(http.get(listUrl).body).messages || [];
+}
 if (found.length === 0) throw new Error('No sign-in email in Mailpit yet');
 var message = json(http.get(mailpit + '/api/v1/message/' + found[0].ID).body);
 var link = /href="([^"]*\/auth\/v1\/verify[^"]*)"/.exec(message.HTML || '');

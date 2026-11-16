@@ -150,7 +150,7 @@ begin
   -- joining user later deletes their account (which sets used_by to null via ON DELETE SET NULL).
   update public.invites
      set used_by = v_user_id,
-         expires_at = pg_catalog.least(expires_at, pg_catalog.now())
+         expires_at = least(expires_at, pg_catalog.now())
    where id = v_invite.id;
 
   return pg_catalog.jsonb_build_object(

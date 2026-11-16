@@ -56,8 +56,10 @@ export default function InviteTokenRoute() {
     setErrorCode(null);
 
     const res = await acceptInviteViaRpc({ tokenOrUrl: token });
+    // This screen handles the token now (and shows any error), so the home screen must not
+    // try it again later without telling the person.
+    setPendingInviteToken(null);
     if (res.ok) {
-      setPendingInviteToken(null);
       router.replace('/(tabs)/today' as never);
       return;
     }
