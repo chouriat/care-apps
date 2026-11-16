@@ -701,13 +701,10 @@ select is(
   'helper cannot delete the circle'
 );
 
+-- CC-2b: doses are marked only through set_dose_status (direct UPDATE is revoked).
 select lives_ok(
-  $$update public.dose_events
-       set status = 'given',
-           acted_by = 'c1000002-2222-4222-8222-222222222222'::uuid,
-           acted_at = now()
-     where id = 'c1300001-0000-4000-8000-000000000001'::uuid$$,
-  'helper can mark dose_events as given'
+  $$select public.set_dose_status("doseEventId" := 'c1300001-0000-4000-8000-000000000001'::uuid, status := 'given')$$,
+  'helper can mark dose_events as given (through set_dose_status)'
 );
 
 select lives_ok(
