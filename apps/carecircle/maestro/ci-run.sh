@@ -15,7 +15,8 @@ adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 
 adb install -r "$APK" || exit 1
 adb logcat -c
 if maestro test apps/carecircle/maestro/sign-in-magic-link.yaml && \
-   maestro test apps/carecircle/maestro/invite-join-circle.yaml; then
+   maestro test apps/carecircle/maestro/invite-join-circle.yaml && \
+   maestro test apps/carecircle/maestro/meds-crud.yaml; then
   exit 0
 fi
 echo "::group::App log (ReactNativeJS, crashes)"

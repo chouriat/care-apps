@@ -258,6 +258,7 @@ describe('CC-3b Medication screens (/(tabs)/meds)', () => {
 
     await waitFor(() => expect(screen.getByTestId(`meds-item-${medDailyId}`)).toBeTruthy());
     expect(screen.queryByTestId('meds-add-button')).toBeNull();
+    expect(screen.queryByTestId('meds-scan-button')).toBeNull();
     expect(screen.queryByTestId(`meds-edit-${medDailyId}`)).toBeNull();
     expect(screen.queryByTestId(`meds-pause-${medDailyId}`)).toBeNull();
 
@@ -315,13 +316,18 @@ describe('CC-3b Medication screens (/(tabs)/meds)', () => {
       },
     };
 
+    const onScanPrescription = jest.fn();
+
     await render(
       <UI.ThemeProvider>
-        <MedsScreen deps={deps} />
+        <MedsScreen deps={deps} onScanPrescription={onScanPrescription} />
       </UI.ThemeProvider>,
     );
 
     await waitFor(() => expect(screen.getByTestId('meds-add-button')).toBeTruthy());
+    expect(screen.getByTestId('meds-scan-button')).toBeTruthy();
+    await fireEvent.press(within(screen.getByTestId('meds-scan-button')).getByRole('button'));
+    expect(onScanPrescription).toHaveBeenCalledTimes(1);
 
     // 1. Add a new medication
     await fireEvent.press(within(screen.getByTestId('meds-add-button')).getByRole('button'));

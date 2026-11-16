@@ -2,7 +2,6 @@ import {
   circleRowSchema,
   doseEventRowSchema,
   medicationRowSchema,
-  memberRoleSchema,
   scheduleSchema,
   validateAnalyticsEvent,
   type Circle,
@@ -14,10 +13,10 @@ import {
   type MedicationSchedule,
   type MemberRole,
 } from '@carecircle/core';
-import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import en from '../../../i18n/en.json';
 import { getSupabaseClient } from '../auth/api';
+import { fetchSignedInMemberRole } from '../circle/api';
 import { loadCareCircleMocks } from '../mocks';
 import { getAppObservability } from '../observability/api';
 import {
@@ -81,7 +80,7 @@ export function formatScheduleSummary(schedule: MedicationSchedule): string {
     case 'weekly':
       return `${en.meds.scheduleKindWeekly} (${schedule.days.map(capitalizeDay).join(', ')}) · ${schedule.times.join(', ')}`;
     case 'every_n_days':
-      return `Every ${schedule.n} days · ${schedule.times.join(', ')}`;
+      return `${en.meds.scheduleEveryNDaysSummary.replace('{n}', String(schedule.n))} · ${schedule.times.join(', ')}`;
     case 'as_needed':
       return en.meds.scheduleKindAsNeeded;
   }
@@ -127,7 +126,10 @@ export function computeMedicationAdherence7d(
     givenCount,
     totalCount,
     percent,
-    label: `${givenCount}/${totalCount} given (${percent}%)`,
+    label: en.meds.adherenceSummary
+      .replace('{given}', String(givenCount))
+      .replace('{total}', String(totalCount))
+      .replace('{percent}', String(percent)),
   };
 }
 
@@ -190,26 +192,6 @@ async function resolveUserId(deps: MedsDeps): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-async function fetchSignedInRole(
-  client: Pick<SupabaseClient, 'from'>,
-  circleId: string,
-  userId: string | null,
-): Promise<{ role: MemberRole; error: { message: string; code?: string } | null }> {
-  const res = await client
-    .from('circle_members')
-    .select('role')
-    .eq('circle_id', circleId)
-    .eq('user_id', userId ?? '00000000-0000-0000-0000-000000000000');
-
-  if (res.error) {
-    return { role: 'viewer', error: { message: res.error.message, code: res.error.code } };
-  }
-  const rows = Array.isArray(res.data) ? res.data : [];
-  const firstRole = (rows[0] as { role?: unknown } | undefined)?.role;
-  const parsed = memberRoleSchema.safeParse(firstRole);
-  return { role: parsed.success ? parsed.data : 'viewer', error: null };
 }
 
 // The server has already saved the change when this runs. Refreshing Today's offline copy and
@@ -318,7 +300,7 @@ export async function loadMedicationsScreen(deps: MedsDeps = {}): Promise<LoadMe
     const windowEndIso = new Date(nowMs).toISOString();
 
     const [roleRes, medsRes, dosesRes] = await Promise.all([
-      fetchSignedInRole(client, circle.id, userId),
+      fetchSignedInMemberRole(client, circle.id, userId),
       client.from('medications').select('*').eq('circle_id', circle.id),
       client
         .from('dose_events')
