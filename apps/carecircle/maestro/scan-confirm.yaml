@@ -1,0 +1,67 @@
+# CC-4b: Prescription photo scan confirm-before-save flow (using photo pushed to emulator library in ci-run.sh).
+appId: app.carecircle.mobile
+env:
+  CAREGIVER_EMAIL: caregiver-scan@example.com
+  MAILPIT_URL: http://127.0.0.1:54324
+---
+- runScript: scripts/clear-mailpit.js
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: 'sign-in-screen'
+- tapOn:
+    id: 'sign-in-email-input'
+- inputText: ${CAREGIVER_EMAIL}
+- hideKeyboard
+- tapOn: '(?i).*magic link.*'
+- assertVisible:
+    id: 'sign-in-magic-link-sent'
+- retry:
+    maxRetries: 5
+    commands:
+      - runScript: scripts/magic-link-from-mailpit.js
+- openLink: ${output.callbackUrl}
+- assertVisible:
+    id: 'onboarding-start-screen'
+- tapOn:
+    id: 'onboarding-circle-name-input'
+- inputText: 'Scan Care Circle'
+- hideKeyboard
+- tapOn:
+    id: 'onboarding-recipient-name-input'
+- inputText: 'Evelyn'
+- hideKeyboard
+- tapOn:
+    id: 'onboarding-submit-button'
+- assertVisible:
+    id: 'today-empty-state'
+- openLink: 'carecircle://meds/scan'
+- assertVisible:
+    id: 'meds-scan-screen'
+- assertVisible:
+    id: 'scan-not-medical-advice'
+- tapOn:
+    id: 'scan-pick-photo-button'
+- tapOn:
+    text: '.*rx-test.*'
+    optional: true
+- assertVisible:
+    id: 'scan-draft-review'
+# Before Save is tapped, open /meds and verify no medications row exists yet
+- openLink: 'carecircle://meds'
+- assertVisible:
+    id: 'meds-empty-state'
+# Return to /meds/scan, pick photo, confirm and save
+- openLink: 'carecircle://meds/scan'
+- tapOn:
+    id: 'scan-pick-photo-button'
+- tapOn:
+    text: '.*rx-test.*'
+    optional: true
+- assertVisible:
+    id: 'scan-draft-review'
+- tapOn:
+    id: 'scan-save-button'
+- assertVisible:
+    id: 'meds-screen'
+- assertVisible: 'Metformin (500 mg)'

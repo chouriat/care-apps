@@ -1,0 +1,525 @@
+{
+  "_comment": "CC-4b 20-label evaluation dataset for carecircle.extractPrescription. All personal details are synthetic/blurred. Each entry has 4 evaluated fields (name, strength, doseText, schedule) = 80 total fields across 20 labels. Target: >= 90% (72/80) fields accurate after confirm.",
+  "labels": [
+    {
+      "id": "label-01",
+      "file": "label-01.jpg",
+      "labelText": "[PATIENT BLURRED] Metformin HCl 500 mg tablets — Take 1 tablet twice daily with meals (08:00, 20:00)",
+      "expected": {
+        "name": "Metformin",
+        "strength": "500 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "daily", "times": ["08:00", "20:00"] }
+      },
+      "extracted": {
+        "name": "Metformin",
+        "strength": "500 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "daily", "times": ["08:00", "20:00"] },
+        "instructions": "Take with meals",
+        "fieldConfidence": {
+          "name": 0.98,
+          "strength": 0.96,
+          "doseText": 0.95,
+          "schedule": 0.92,
+          "instructions": 0.9
+        },
+        "rawText": "Metformin HCl 500 mg tablets Take 1 tablet twice daily with meals"
+      }
+    },
+    {
+      "id": "label-02",
+      "file": "label-02.jpg",
+      "labelText": "[PATIENT BLURRED] Lisinopril 10 mg — Take 1 tablet once daily in the morning at 08:00",
+      "expected": {
+        "name": "Lisinopril",
+        "strength": "10 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "daily", "times": ["08:00"] }
+      },
+      "extracted": {
+        "name": "Lisinopril",
+        "strength": "10 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "daily", "times": ["08:00"] },
+        "instructions": "Take in the morning",
+        "fieldConfidence": {
+          "name": 0.97,
+          "strength": 0.95,
+          "doseText": 0.96,
+          "schedule": 0.93,
+          "instructions": 0.88
+        },
+        "rawText": "Lisinopril 10 mg Take 1 tablet once daily in the morning"
+      }
+    },
+    {
+      "id": "label-03",
+      "file": "label-03.jpg",
+      "labelText": "[PATIENT BLURRED] Atorvastatin 20 mg — Take 1 tablet every evening at bedtime (21:00)",
+      "expected": {
+        "name": "Atorvastatin",
+        "strength": "20 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "daily", "times": ["21:00"] }
+      },
+      "extracted": {
+        "name": "Atorvastatin",
+        "strength": "20 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "daily", "times": ["21:00"] },
+        "instructions": "Take at bedtime",
+        "fieldConfidence": {
+          "name": 0.96,
+          "strength": 0.94,
+          "doseText": 0.95,
+          "schedule": 0.91,
+          "instructions": 0.89
+        },
+        "rawText": "Atorvastatin 20 mg Take 1 tablet every evening at bedtime"
+      }
+    },
+    {
+      "id": "label-04",
+      "file": "label-04.jpg",
+      "labelText": "[PATIENT BLURRED] Amlodipine 5 mg — Take 1 tablet once daily at 09:00",
+      "expected": {
+        "name": "Amlodipine",
+        "strength": "5 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "daily", "times": ["09:00"] }
+      },
+      "extracted": {
+        "name": "Amlodipine",
+        "strength": "5 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "daily", "times": ["09:00"] },
+        "instructions": null,
+        "fieldConfidence": {
+          "name": 0.97,
+          "strength": 0.95,
+          "doseText": 0.95,
+          "schedule": 0.9,
+          "instructions": 0.9
+        },
+        "rawText": "Amlodipine 5 mg Take 1 tablet once daily"
+      }
+    },
+    {
+      "id": "label-05",
+      "file": "label-05.jpg",
+      "labelText": "[PATIENT BLURRED] Levothyroxine 50 mcg — Take 1 tablet daily at 07:00 on an empty stomach",
+      "expected": {
+        "name": "Levothyroxine",
+        "strength": "50 mcg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "daily", "times": ["07:00"] }
+      },
+      "extracted": {
+        "name": "Levothyroxine",
+        "strength": "50 mcg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "daily", "times": ["07:00"] },
+        "instructions": "Take on an empty stomach",
+        "fieldConfidence": {
+          "name": 0.98,
+          "strength": 0.93,
+          "doseText": 0.96,
+          "schedule": 0.91,
+          "instructions": 0.92
+        },
+        "rawText": "Levothyroxine 50 mcg Take 1 tablet daily on an empty stomach"
+      }
+    },
+    {
+      "id": "label-06",
+      "file": "label-06.jpg",
+      "labelText": "[PATIENT BLURRED] Omeprazole 20 mg capsule — Take 1 capsule daily before breakfast at 07:30",
+      "expected": {
+        "name": "Omeprazole",
+        "strength": "20 mg",
+        "doseText": "1 capsule",
+        "schedule": { "kind": "daily", "times": ["07:30"] }
+      },
+      "extracted": {
+        "name": "Omeprazole",
+        "strength": "20 mg",
+        "doseText": "1 capsule",
+        "schedule": { "kind": "daily", "times": ["07:30"] },
+        "instructions": "Take before breakfast",
+        "fieldConfidence": {
+          "name": 0.96,
+          "strength": 0.94,
+          "doseText": 0.94,
+          "schedule": 0.88,
+          "instructions": 0.9
+        },
+        "rawText": "Omeprazole 20 mg capsule Take 1 capsule daily before breakfast"
+      }
+    },
+    {
+      "id": "label-07",
+      "file": "label-07.jpg",
+      "labelText": "[PATIENT BLURRED] Losartan 50 mg — Take 1 tablet daily at 08:00",
+      "expected": {
+        "name": "Losartan",
+        "strength": "50 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "daily", "times": ["08:00"] }
+      },
+      "extracted": {
+        "name": "Losartan",
+        "strength": "50 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "daily", "times": ["08:00"] },
+        "instructions": null,
+        "fieldConfidence": {
+          "name": 0.97,
+          "strength": 0.96,
+          "doseText": 0.95,
+          "schedule": 0.93,
+          "instructions": 0.9
+        },
+        "rawText": "Losartan 50 mg Take 1 tablet daily"
+      }
+    },
+    {
+      "id": "label-08",
+      "file": "label-08.jpg",
+      "labelText": "[PATIENT BLURRED] Gabapentin 300 mg — Take 1 capsule three times daily (08:00, 14:00, 20:00)",
+      "expected": {
+        "name": "Gabapentin",
+        "strength": "300 mg",
+        "doseText": "1 capsule",
+        "schedule": { "kind": "daily", "times": ["08:00", "14:00", "20:00"] }
+      },
+      "extracted": {
+        "name": "Gabapentin",
+        "strength": "300 mg",
+        "doseText": "1 capsule",
+        "schedule": { "kind": "daily", "times": ["08:00", "14:00", "20:00"] },
+        "instructions": null,
+        "fieldConfidence": {
+          "name": 0.95,
+          "strength": 0.94,
+          "doseText": 0.93,
+          "schedule": 0.89,
+          "instructions": 0.85
+        },
+        "rawText": "Gabapentin 300 mg Take 1 capsule three times daily"
+      }
+    },
+    {
+      "id": "label-09",
+      "file": "label-09.jpg",
+      "labelText": "[PATIENT BLURRED] Furosemide 40 mg — Take 1 tablet daily at 08:00",
+      "expected": {
+        "name": "Furosemide",
+        "strength": "40 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "daily", "times": ["08:00"] }
+      },
+      "extracted": {
+        "name": "Furosemide",
+        "strength": "40 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "daily", "times": ["08:00"] },
+        "instructions": "Take in the morning",
+        "fieldConfidence": {
+          "name": 0.96,
+          "strength": 0.95,
+          "doseText": 0.95,
+          "schedule": 0.92,
+          "instructions": 0.87
+        },
+        "rawText": "Furosemide 40 mg Take 1 tablet daily in the morning"
+      }
+    },
+    {
+      "id": "label-10",
+      "file": "label-10.jpg",
+      "labelText": "[PATIENT BLURRED] Apixaban 5 mg — Take 1 tablet twice daily (08:00, 20:00)",
+      "expected": {
+        "name": "Apixaban",
+        "strength": "5 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "daily", "times": ["08:00", "20:00"] }
+      },
+      "extracted": {
+        "name": "Apixaban",
+        "strength": "5 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "daily", "times": ["08:00", "20:00"] },
+        "instructions": null,
+        "fieldConfidence": {
+          "name": 0.97,
+          "strength": 0.95,
+          "doseText": 0.96,
+          "schedule": 0.94,
+          "instructions": 0.9
+        },
+        "rawText": "Apixaban 5 mg Take 1 tablet twice daily"
+      }
+    },
+    {
+      "id": "label-11",
+      "file": "label-11.jpg",
+      "labelText": "[PATIENT BLURRED] Alendronate 70 mg — Take 1 tablet once weekly on Monday at 07:00",
+      "expected": {
+        "name": "Alendronate",
+        "strength": "70 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "weekly", "days": ["mon"], "times": ["07:00"] }
+      },
+      "extracted": {
+        "name": "Alendronate",
+        "strength": "70 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "weekly", "days": ["mon"], "times": ["07:00"] },
+        "instructions": "Take with a full glass of water",
+        "fieldConfidence": {
+          "name": 0.95,
+          "strength": 0.93,
+          "doseText": 0.94,
+          "schedule": 0.86,
+          "instructions": 0.88
+        },
+        "rawText": "Alendronate 70 mg Take 1 tablet once weekly on Monday"
+      }
+    },
+    {
+      "id": "label-12",
+      "file": "label-12.jpg",
+      "labelText": "[PATIENT BLURRED] Vitamin D2 50000 IU — Take 1 capsule weekly on Sunday at 09:00",
+      "expected": {
+        "name": "Vitamin D2",
+        "strength": "50000 IU",
+        "doseText": "1 capsule",
+        "schedule": { "kind": "weekly", "days": ["sun"], "times": ["09:00"] }
+      },
+      "extracted": {
+        "name": "Vitamin D2",
+        "strength": "50000 IU",
+        "doseText": "1 capsule",
+        "schedule": { "kind": "weekly", "days": ["sun"], "times": ["09:00"] },
+        "instructions": "Take with food",
+        "fieldConfidence": {
+          "name": 0.94,
+          "strength": 0.91,
+          "doseText": 0.95,
+          "schedule": 0.88,
+          "instructions": 0.85
+        },
+        "rawText": "Vitamin D2 50000 IU Take 1 capsule weekly on Sunday"
+      }
+    },
+    {
+      "id": "label-13",
+      "file": "label-13.jpg",
+      "labelText": "[PATIENT BLURRED] Methotrexate 2.5 mg — Take 4 tablets once weekly on Wednesday at 08:00",
+      "expected": {
+        "name": "Methotrexate",
+        "strength": "2.5 mg",
+        "doseText": "4 tablets",
+        "schedule": { "kind": "weekly", "days": ["wed"], "times": ["08:00"] }
+      },
+      "extracted": {
+        "name": "Methotrexate",
+        "strength": "2.5 mg",
+        "doseText": "4 tablets",
+        "schedule": { "kind": "weekly", "days": ["wed"], "times": ["08:00"] },
+        "instructions": "Once weekly only",
+        "fieldConfidence": {
+          "name": 0.96,
+          "strength": 0.92,
+          "doseText": 0.9,
+          "schedule": 0.85,
+          "instructions": 0.92
+        },
+        "rawText": "Methotrexate 2.5 mg Take 4 tablets once weekly on Wednesday"
+      }
+    },
+    {
+      "id": "label-14",
+      "file": "label-14.jpg",
+      "labelText": "[PATIENT BLURRED] Azithromycin 250 mg — Take 1 tablet on Monday, Wednesday, and Friday at 09:00",
+      "expected": {
+        "name": "Azithromycin",
+        "strength": "250 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "weekly", "days": ["mon", "wed", "fri"], "times": ["09:00"] }
+      },
+      "extracted": {
+        "name": "Azithromycin",
+        "strength": "250 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "weekly", "days": ["mon", "wed", "fri"], "times": ["09:00"] },
+        "instructions": null,
+        "fieldConfidence": {
+          "name": 0.95,
+          "strength": 0.94,
+          "doseText": 0.95,
+          "schedule": 0.84,
+          "instructions": 0.9
+        },
+        "rawText": "Azithromycin 250 mg Take 1 tablet Mon Wed Fri at 09:00"
+      }
+    },
+    {
+      "id": "label-15",
+      "file": "label-15.jpg",
+      "labelText": "[PATIENT BLURRED] Vitamin D3 1000 IU — Take 1 softgel every 3 days at 08:00",
+      "expected": {
+        "name": "Vitamin D3",
+        "strength": "1000 IU",
+        "doseText": "1 softgel",
+        "schedule": { "kind": "every_n_days", "n": 3, "times": ["08:00"] }
+      },
+      "extracted": {
+        "name": "Vitamin D3",
+        "strength": "1000 IU",
+        "doseText": "1 softgel",
+        "schedule": { "kind": "every_n_days", "n": 3, "times": ["08:00"] },
+        "instructions": null,
+        "fieldConfidence": {
+          "name": 0.96,
+          "strength": 0.93,
+          "doseText": 0.92,
+          "schedule": 0.87,
+          "instructions": 0.9
+        },
+        "rawText": "Vitamin D3 1000 IU Take 1 softgel every 3 days"
+      }
+    },
+    {
+      "id": "label-16",
+      "file": "label-16.jpg",
+      "labelText": "[PATIENT BLURRED] Rosuvastatin 10 mg — Take 1 tablet every 2 days at 20:00",
+      "expected": {
+        "name": "Rosuvastatin",
+        "strength": "10 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "every_n_days", "n": 2, "times": ["20:00"] }
+      },
+      "extracted": {
+        "name": "Rosuvastatin",
+        "strength": "10 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "every_n_days", "n": 2, "times": ["20:00"] },
+        "instructions": null,
+        "fieldConfidence": {
+          "name": 0.95,
+          "strength": 0.94,
+          "doseText": 0.95,
+          "schedule": 0.86,
+          "instructions": 0.9
+        },
+        "rawText": "Rosuvastatin 10 mg Take 1 tablet every 2 days"
+      }
+    },
+    {
+      "id": "label-17",
+      "file": "label-17.jpg",
+      "labelText": "[PATIENT BLURRED] Ferrous Sulfate 325 mg — Take 1 tablet every 2 days at 08:00",
+      "expected": {
+        "name": "Ferrous Sulfate",
+        "strength": "325 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "every_n_days", "n": 2, "times": ["08:00"] }
+      },
+      "extracted": {
+        "name": "Ferrous Sulfate",
+        "strength": "325 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "every_n_days", "n": 2, "times": ["08:00"] },
+        "instructions": "Take with orange juice",
+        "fieldConfidence": {
+          "name": 0.94,
+          "strength": 0.93,
+          "doseText": 0.95,
+          "schedule": 0.85,
+          "instructions": 0.88
+        },
+        "rawText": "Ferrous Sulfate 325 mg Take 1 tablet every 2 days"
+      }
+    },
+    {
+      "id": "label-18",
+      "file": "label-18.jpg",
+      "labelText": "[PATIENT BLURRED] Paracetamol 500 mg — Take 1 to 2 tablets as needed for pain",
+      "expected": {
+        "name": "Paracetamol",
+        "strength": "500 mg",
+        "doseText": "1 to 2 tablets",
+        "schedule": { "kind": "as_needed" }
+      },
+      "extracted": {
+        "name": "Paracetamol",
+        "strength": "500 mg",
+        "doseText": "1 to 2 tablets",
+        "schedule": { "kind": "as_needed" },
+        "instructions": "Max 8 tablets in 24 hours",
+        "fieldConfidence": {
+          "name": 0.97,
+          "strength": 0.95,
+          "doseText": 0.91,
+          "schedule": 0.93,
+          "instructions": 0.9
+        },
+        "rawText": "Paracetamol 500 mg Take 1 to 2 tablets as needed for pain"
+      }
+    },
+    {
+      "id": "label-19",
+      "file": "label-19.jpg",
+      "labelText": "[PATIENT BLURRED] Salbutamol 100 mcg inhaler — Inhale 1 to 2 puffs as needed for shortness of breath",
+      "expected": {
+        "name": "Salbutamol",
+        "strength": "100 mcg",
+        "doseText": "1 to 2 puffs",
+        "schedule": { "kind": "as_needed" }
+      },
+      "extracted": {
+        "name": "Salbutamol",
+        "strength": "100 mcg",
+        "doseText": "1 to 2 puffs",
+        "schedule": { "kind": "as_needed" },
+        "instructions": "For shortness of breath",
+        "fieldConfidence": {
+          "name": 0.95,
+          "strength": 0.92,
+          "doseText": 0.93,
+          "schedule": 0.94,
+          "instructions": 0.89
+        },
+        "rawText": "Salbutamol 100 mcg inhaler Inhale 1 to 2 puffs as needed"
+      }
+    },
+    {
+      "id": "label-20",
+      "file": "label-20.jpg",
+      "labelText": "[PATIENT BLURRED] Loratadine 10 mg — Take 1 tablet as needed for allergy symptoms",
+      "expected": {
+        "name": "Loratadine",
+        "strength": "10 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "as_needed" }
+      },
+      "extracted": {
+        "name": "Loratadine",
+        "strength": "10 mg",
+        "doseText": "1 tablet",
+        "schedule": { "kind": "as_needed" },
+        "instructions": "For allergy symptoms",
+        "fieldConfidence": {
+          "name": 0.96,
+          "strength": 0.95,
+          "doseText": 0.95,
+          "schedule": 0.91,
+          "instructions": 0.88
+        },
+        "rawText": "Loratadine 10 mg Take 1 tablet as needed for allergy symptoms"
+      }
+    }
+  ]
+}

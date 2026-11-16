@@ -67,7 +67,7 @@ export type MedsErrorCode =
   | 'SAVE_MED_FAILED';
 
 export interface MedsDeps extends TodayDeps {
-  trackMedAdded?: () => void;
+  trackMedAdded?: (source?: 'manual' | 'photo') => void;
 }
 
 function capitalizeDay(day: string): string {
@@ -224,10 +224,10 @@ async function refreshTodayAfterSave(deps: MedsDeps): Promise<void> {
   requestTodayReload();
 }
 
-function defaultTrackMedAdded(): void {
-  const payload = validateAnalyticsEvent('cc_med_added', { source: 'manual' });
+function defaultTrackMedAdded(source: 'manual' | 'photo' = 'manual'): void {
+  const payload = validateAnalyticsEvent('cc_med_added', { source });
   void getAppObservability()
-    .analytics.track('cc_med_added', payload as { source: 'manual' })
+    .analytics.track('cc_med_added', payload as { source: 'manual' | 'photo' })
     .catch(() => undefined);
 }
 
@@ -379,6 +379,7 @@ export async function addMedication(
     startDate?: string | null;
     endDate?: string | null;
     memberRole?: MemberRole;
+    source?: 'manual' | 'photo';
   },
   deps: MedsDeps = {},
 ): Promise<
@@ -407,6 +408,7 @@ export async function addMedication(
     return { ok: false, errorCode: 'NETWORK_ERROR', isOffline: true };
   }
 
+  const source: 'manual' | 'photo' = input.source === 'photo' ? 'photo' : 'manual';
   const trackMedAdded = deps.trackMedAdded ?? defaultTrackMedAdded;
   const mocks = loadCareCircleMocks(deps.env);
 
@@ -423,15 +425,20 @@ export async function addMedication(
       startDate: parsed.data.startDate ?? '2026-11-15',
       endDate: parsed.data.endDate ?? null,
       active: true,
-      source: 'manual',
+      source,
     };
     snapshot.medications.push(created);
-    trackMedAdded();
+    try {
+      trackMedAdded(source);
+    } catch {
+      // Analytics never turns a saved medicine into a failure.
+    }
     await refreshTodayAfterSave(deps);
     return { ok: true, medication: created };
   }
 
   const getClient = deps.getClient ?? getSupabaseClient;
+  let medication: Medication;
 
   try {
     const client = getClient();
@@ -449,7 +456,7 @@ export async function addMedication(
         ...(parsed.data.startDate ? { start_date: parsed.data.startDate } : {}),
         end_date: parsed.data.endDate ?? null,
         active: true,
-        source: 'manual',
+        source,
       })
       .select('*');
 
@@ -467,10 +474,7 @@ export async function addMedication(
       return { ok: false, errorCode: 'SAVE_MED_FAILED', isOffline: false };
     }
 
-    const medication = medicationFromRow(medicationRowSchema.parse(rows[0]));
-    trackMedAdded();
-    await refreshTodayAfterSave(deps);
-    return { ok: true, medication };
+    medication = medicationFromRow(medicationRowSchema.parse(rows[0]));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const offline = isNetworkFailureMessage(message);
@@ -480,6 +484,14 @@ export async function addMedication(
       isOffline: offline,
     };
   }
+
+  try {
+    trackMedAdded(source);
+  } catch {
+    // Analytics never turns a saved medicine into a failure.
+  }
+  await refreshTodayAfterSave(deps);
+  return { ok: true, medication };
 }
 
 export async function updateMedication(

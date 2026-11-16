@@ -12,7 +12,12 @@ export type ActionSpec = Record<'label', string> &
 export type ButtonVariant = 'primary' | 'secondary' | 'danger';
 export type CardTone = 'default' | 'muted' | 'warning';
 export type ChipTone = 'default' | 'primary' | 'warning' | 'danger';
-export type DraftField = Record<'label' | 'value', string> & { confidence: number };
+export type DraftField = Record<'label' | 'value', string> & {
+  confidence: number;
+  testID?: string;
+  lowConfidenceTestID?: string;
+  onChangeValue?: (value: string) => void;
+};
 
 export function Screen(
   p: Record<'accessibilityLabel', string> & Opt<'scrollable', boolean> & { children: ReactNode },
@@ -163,12 +168,19 @@ export function ErrorState(
 
 export function ConfirmDraft(
   p: Record<'saveLabel' | 'lowConfidenceLabel', string> &
-    Record<'fields', ReadonlyArray<DraftField>> & { onConfirm: (fields: DraftField[]) => void },
+    Record<'fields', ReadonlyArray<DraftField>> & {
+      onConfirm: (fields: DraftField[]) => void;
+      disabled?: boolean;
+      saveTestID?: string;
+      children?: ReactNode;
+    },
 ) {
   const { colors: c, typography: t } = useTheme();
   const [draft, setDraft] = useState<DraftField[]>(() => p.fields.map((f) => ({ ...f })));
-  const update = (idx: number, value: string) =>
+  const update = (idx: number, value: string) => {
     setDraft((prev) => prev.map((item, i) => (i === idx ? { ...item, value } : item)));
+    p.fields[idx]?.onChangeValue?.(value);
+  };
   return (
     <Card>
       {draft.map((f, idx) => {
@@ -179,6 +191,7 @@ export function ConfirmDraft(
         const inp = [styles.input, styles.boxBorder, t.body, { color: fg, ...palette }];
         const hint = low ? p.lowConfidenceLabel : undefined;
         const inputProps = {
+          testID: f.testID,
           value: f.value,
           accessibilityLabel: f.label,
           accessibilityHint: hint,
@@ -189,13 +202,18 @@ export function ConfirmDraft(
           <View key={f.label} style={[styles.card, palette]}>
             <View style={styles.rowBetween}>
               <Text style={[t.label, { color: fg }]} children={f.label} />
-              {low ? <Text style={cap} children={p.lowConfidenceLabel} /> : null}
+              {low ? (
+                <Text testID={f.lowConfidenceTestID} style={cap} children={p.lowConfidenceLabel} />
+              ) : null}
             </View>
             <TextInput {...inputProps} onChangeText={(v) => update(idx, v)} />
           </View>
         );
       })}
-      <Button label={p.saveLabel} onPress={() => p.onConfirm(draft)} />
+      {p.children}
+      <View testID={p.saveTestID}>
+        <Button label={p.saveLabel} disabled={p.disabled} onPress={() => p.onConfirm(draft)} />
+      </View>
     </Card>
   );
 }

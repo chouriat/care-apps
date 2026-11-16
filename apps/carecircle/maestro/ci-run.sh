@@ -13,6 +13,8 @@ sleep 20
 adb shell input keyevent KEYCODE_HOME
 adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1 || true
 adb install -r "$APK" || exit 1
+adb push evals/carecircle/labels/label-01.jpg /sdcard/Pictures/rx-test.jpg >/dev/null 2>&1 || true
+adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///sdcard/Pictures/rx-test.jpg >/dev/null 2>&1 || true
 adb logcat -c
 if maestro test apps/carecircle/maestro/sign-in-magic-link.yaml && \
    maestro test apps/carecircle/maestro/invite-join-circle.yaml; then
