@@ -501,6 +501,63 @@ describe('CC-4a Prescription photo scan screen (/meds/scan)', () => {
     expect(backend.insertedMeds[0]).not.toHaveProperty('start_date');
   });
 
+  it('saves what the person typed, not what the AI read, for every text field', async () => {
+    const backend = createFakeScanBackend();
+    const onSaved = jest.fn();
+    const deps: ScanDeps = {
+      supabase: backend.supabase,
+      photoId: PHOTO_ID,
+      photoPicker: {
+        takePhoto: async () => ({
+          bytes: makeJpegBytes(1024),
+          width: 800,
+          height: 600,
+          contentType: 'image/jpeg',
+        }),
+        pickPhoto: async () => null,
+      },
+      callExtractPrescription: async () => ({
+        ok: true,
+        output: SAMPLE_EXTRACTED,
+        model: 'claude-haiku-4-5',
+        latencyMs: 120,
+      }),
+      trackMedAddedFromPhoto: () => undefined,
+    };
+
+    await render(
+      <UI.ThemeProvider>
+        <PrescriptionScanScreen
+          circleId={CIRCLE_ID}
+          memberRole="owner"
+          deps={deps}
+          onSaved={onSaved}
+        />
+      </UI.ThemeProvider>,
+    );
+
+    await fireEvent.press(within(screen.getByTestId('scan-take-photo-button')).getByRole('button'));
+    await waitFor(() => expect(screen.getByTestId('scan-draft-review')).toBeTruthy());
+
+    await fireEvent.changeText(screen.getByTestId('scan-draft-name-input'), '  Metformin XR ');
+    await fireEvent.changeText(screen.getByTestId('scan-draft-strength-input'), '750 mg');
+    await fireEvent.changeText(screen.getByTestId('scan-draft-dose-text-input'), '2 tablets');
+    await fireEvent.changeText(screen.getByTestId('scan-draft-instructions-input'), '');
+    await fireEvent.changeText(screen.getByTestId('scan-draft-schedule-times-input'), '07:30');
+    await fireEvent.press(within(screen.getByTestId('scan-save-button')).getByRole('button'));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(backend.insertedMeds).toHaveLength(1);
+    expect(backend.insertedMeds[0]).toMatchObject({
+      name: 'Metformin XR',
+      strength: '750 mg',
+      dose_text: '2 tablets',
+      instructions: null,
+      schedule: { kind: 'daily', times: ['07:30'] },
+      source: 'photo',
+    });
+  });
+
   it('skips Supabase Storage upload and delete when MOCKS=1 and returns the mock draft', async () => {
     const onSaved = jest.fn();
     const deps: ScanDeps = {

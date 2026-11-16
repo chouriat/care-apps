@@ -25,6 +25,15 @@ module.exports = ({ config }) => {
         'It is allowed only for development and preview. Remove it from that EAS environment.',
     );
   }
+  // Mocks mode shows made-up data and skips the photo upload and delete on /meds/scan. A store
+  // build must never have it, whichever way it was set.
+  const mocksVars = ['EXPO_PUBLIC_MOCKS', 'MOCKS'].filter((key) => isSet(process.env[key]));
+  if (isSet(profile) && !DEV_CHECKS_PROFILES.includes(profile) && mocksVars.length > 0) {
+    throw new Error(
+      `CareCircle: ${mocksVars.join(' and ')} is set for the "${profile}" EAS build profile. ` +
+        'Mocks mode is allowed only for development and preview. Remove it from that EAS environment.',
+    );
+  }
 
   const plugins = (config.plugins ?? []).map((plugin) => {
     const name = Array.isArray(plugin) ? plugin[0] : plugin;

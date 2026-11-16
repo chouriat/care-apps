@@ -11,23 +11,23 @@ const EXPECTED_PATH = path.join(LABELS_DIR, 'expected.json');
 const MAX_JPEG_BYTES = 2 * 1024 * 1024;
 const TARGET_ACCURACY = 0.9;
 
-// Minimal valid 1x1 white JPEG (107 bytes) for synthetic placeholder labels before real blurred photos are added.
-const MINIMAL_1X1_JPEG = Buffer.from(
-  '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=',
-  'base64',
-);
+// A real label photo is a decodable JPEG (ends with the FF D9 end marker) of real size. The
+// committed placeholders were 134-byte, truncated, identical white 1x1 files: scoring them
+// "proved" nothing, because nothing was ever sent to the AI.
+const MIN_REAL_PHOTO_BYTES = 10 * 1024;
 
-export function ensurePlaceholderLabelImages() {
-  if (!fs.existsSync(EXPECTED_PATH)) {
-    throw new Error(`Missing expected.json at ${EXPECTED_PATH}`);
+export function findPlaceholderPhotos(files) {
+  const seen = new Map();
+  const problems = [];
+  for (const { file, bytes } of files) {
+    const n = bytes.length;
+    const endsWithEoi = n >= 2 && bytes[n - 2] === 0xff && bytes[n - 1] === 0xd9;
+    const key = bytes.toString('base64');
+    if (n < MIN_REAL_PHOTO_BYTES || !endsWithEoi) problems.push(`${file} (too small or cut off)`);
+    else if (seen.has(key)) problems.push(`${file} (same bytes as ${seen.get(key)})`);
+    if (!seen.has(key)) seen.set(key, file);
   }
-  const dataset = JSON.parse(fs.readFileSync(EXPECTED_PATH, 'utf8'));
-  for (const item of dataset.labels) {
-    const filePath = path.join(LABELS_DIR, item.file);
-    if (!fs.existsSync(filePath)) {
-      fs.writeFileSync(filePath, MINIMAL_1X1_JPEG);
-    }
-  }
+  return problems;
 }
 
 function deepEqual(a, b) {
@@ -81,9 +81,9 @@ export function evaluateLabelDataset(dataset) {
 }
 
 function runCli() {
-  ensurePlaceholderLabelImages();
   const raw = fs.readFileSync(EXPECTED_PATH, 'utf8');
   const dataset = JSON.parse(raw);
+  const files = [];
 
   // Verify all 20 JPEG files exist and have a valid JPEG header (FF D8 FF) and size <= 2 MB.
   for (const item of dataset.labels) {
@@ -98,6 +98,26 @@ function runCli() {
     if (bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) {
       throw new Error(`Label image ${item.file} does not start with JPEG header FF D8 FF`);
     }
+    files.push({ file: item.file, bytes: Buffer.from(bytes) });
+  }
+
+  const placeholders = findPlaceholderPhotos(files);
+  if (placeholders.length > 0) {
+    process.stderr.write(
+      `NOT RUN: ${placeholders.length} label photo(s) are placeholders, not real blurred labels:\n` +
+        placeholders.map((p) => `  - ${p}\n`).join('') +
+        'No accuracy is reported until the 20 blurred photos are in evals/carecircle/labels/.\n',
+    );
+    process.exit(1);
+  }
+
+  // Until the gateway runner exists, `extracted` is a hand-written answer, not an AI reading.
+  if (dataset.labels.some((item) => item.extracted && !item.extractedBy)) {
+    process.stderr.write(
+      'NOT RUN: expected.json has hand-written "extracted" answers. The eval must send each photo ' +
+        'through carecircle.extractPrescription and score that reading, not a copy of the answer.\n',
+    );
+    process.exit(1);
   }
 
   const summary = evaluateLabelDataset(dataset);
