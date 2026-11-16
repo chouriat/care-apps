@@ -22,8 +22,32 @@ export interface RxStorageSupabaseLike {
   };
 }
 
-export function createPrescriptionPhotoId(): string {
-  return crypto.randomUUID().toLowerCase();
+type UuidSources = {
+  crypto?: { randomUUID?: () => string };
+  expo?: { uuidv4?: () => string };
+};
+
+// Hermes (the JavaScript engine on iOS and Android) has no `crypto.randomUUID`, so on a phone
+// we use the UUID generator that every Expo app already has natively (`globalThis.expo.uuidv4`,
+// from expo-modules-core). Jest and the web have `crypto.randomUUID`.
+export function createPrescriptionPhotoId(
+  sources: UuidSources = globalThis as unknown as UuidSources,
+): string {
+  const randomUUID = sources.crypto?.randomUUID;
+  const id =
+    typeof randomUUID === 'function'
+      ? randomUUID.call(sources.crypto)
+      : typeof sources.expo?.uuidv4 === 'function'
+        ? sources.expo.uuidv4()
+        : null;
+  if (id === null) {
+    throw new Error('No UUID generator available for the prescription photo id');
+  }
+  const lower = id.toLowerCase();
+  if (!LOWERCASE_UUID_REGEX.test(lower)) {
+    throw new Error('UUID generator returned an invalid prescription photo id');
+  }
+  return lower;
 }
 
 export function buildPrescriptionPhotoPath(
