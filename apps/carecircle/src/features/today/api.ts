@@ -24,6 +24,7 @@ import {
   type TaskRow,
 } from '@carecircle/core';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { File, Paths } from 'expo-file-system';
 import { z } from 'zod';
 import { getSupabaseClient } from '../auth/api';
 import { loadCareCircleMocks, type CareCircleMocks } from '../mocks';
@@ -64,6 +65,10 @@ export const todaySnapshotSchema = z
     appointments: z.array(appointmentSchema),
     tasks: z.array(taskSchema),
     fetchedAt: z.string().datetime({ offset: true }),
+    // The signed-in user the snapshot was loaded for. A cached snapshot or queued check-off is
+    // only used for that same user, so a second account on the same phone never sees or sends
+    // the first account's family data.
+    userId: z.string().uuid().nullable().optional(),
   })
   .strict();
 
@@ -74,6 +79,7 @@ export const queuedDoseCheckOffSchema = z
     doseEventId: z.string().uuid(),
     status: todayDoseStatusActionSchema,
     actedAt: z.string().datetime({ offset: true }),
+    userId: z.string().uuid().nullable().optional(),
   })
   .strict();
 
@@ -97,7 +103,7 @@ export interface TodayStorageAdapter {
 
 const memoryStore = new Map<string, string>();
 
-export const defaultTodayStorage: TodayStorageAdapter = {
+export const memoryTodayStorage: TodayStorageAdapter = {
   getItem(key: string): string | null {
     return memoryStore.get(key) ?? null;
   },
@@ -106,6 +112,59 @@ export const defaultTodayStorage: TodayStorageAdapter = {
   },
   removeItem(key: string): void {
     memoryStore.delete(key);
+  },
+};
+
+// The offline cache and the check-off queue must survive the app being closed: a carer who taps
+// Given on a plane and then swipes the app away must not lose the check-off, or another carer
+// could see the dose as still due. Memory alone loses both. expo-file-system is already a
+// dependency. The queue (dose ids and statuses only) goes in the document folder, which the OS
+// keeps; the snapshot (medicine names) goes in the cache folder, which is not backed up and
+// which the OS may clear when space is low, which only costs a reload.
+// https://docs.expo.dev/versions/latest/sdk/filesystem/ (checked 2026-11-16)
+function fileForKey(key: string): File {
+  const dir = key === TODAY_CHECKOFF_QUEUE_KEY ? Paths.document : Paths.cache;
+  return new File(dir, `${key}.json`);
+}
+
+export const fileTodayStorage: TodayStorageAdapter = {
+  async getItem(key: string): Promise<string | null> {
+    const file = fileForKey(key);
+    return file.exists ? await file.text() : null;
+  },
+  async setItem(key: string, value: string): Promise<void> {
+    const file = fileForKey(key);
+    if (!file.exists) file.create();
+    await file.write(value);
+  },
+  removeItem(key: string): void {
+    const file = fileForKey(key);
+    if (file.exists) file.delete();
+  },
+};
+
+function canUseFileStorage(): boolean {
+  try {
+    return Boolean(Paths.document?.uri);
+  } catch {
+    return false;
+  }
+}
+
+// Files on the phone; memory only where the native module is missing (Jest, web export).
+export const defaultTodayStorage: TodayStorageAdapter = {
+  async getItem(key) {
+    return canUseFileStorage() ? fileTodayStorage.getItem(key) : memoryTodayStorage.getItem(key);
+  },
+  async setItem(key, value) {
+    return canUseFileStorage()
+      ? fileTodayStorage.setItem(key, value)
+      : memoryTodayStorage.setItem(key, value);
+  },
+  async removeItem(key) {
+    return canUseFileStorage()
+      ? fileTodayStorage.removeItem?.(key)
+      : memoryTodayStorage.removeItem?.(key);
   },
 };
 
@@ -277,12 +336,18 @@ export function applyQueuedCheckOffsToSnapshot(
 
 export async function loadQueuedDoseCheckOffs(
   storage: TodayStorageAdapter = defaultTodayStorage,
+  userId?: string | null,
 ): Promise<QueuedDoseCheckOff[]> {
   try {
     const raw = await storage.getItem(TODAY_CHECKOFF_QUEUE_KEY);
     if (!raw) return [];
     const parsed = z.array(queuedDoseCheckOffSchema).safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : [];
+    if (!parsed.success) return [];
+    // With a user id, only that user's check-offs count (another account on this phone must
+    // never send them under its own name).
+    return userId === undefined
+      ? parsed.data
+      : parsed.data.filter((item) => (item.userId ?? null) === userId);
   } catch {
     return [];
   }
@@ -304,13 +369,15 @@ export async function saveCachedTodaySnapshot(
 
 export async function loadCachedTodaySnapshot(
   storage: TodayStorageAdapter = defaultTodayStorage,
+  userId?: string | null,
 ): Promise<TodaySnapshot | null> {
   try {
     const raw = await storage.getItem(TODAY_SNAPSHOT_CACHE_KEY);
     if (!raw) return null;
     const parsed = todaySnapshotSchema.safeParse(JSON.parse(raw));
     if (!parsed.success) return null;
-    const queue = await loadQueuedDoseCheckOffs(storage);
+    if (userId !== undefined && (parsed.data.userId ?? null) !== userId) return null;
+    const queue = await loadQueuedDoseCheckOffs(storage, userId);
     return applyQueuedCheckOffsToSnapshot(parsed.data, queue);
   } catch {
     return null;
@@ -414,12 +481,28 @@ export type LoadTodaySnapshotResult =
 
 export interface TodayDeps {
   getClient?: () => Pick<SupabaseClient, 'from' | 'rpc'>;
+  /** The signed-in user's id. The default reads the stored session, which works offline. */
+  getUserId?: () => Promise<string | null>;
   storage?: TodayStorageAdapter;
   env?: Record<string, string | undefined>;
   isOffline?: boolean;
   now?: () => Date;
   trackDoseAction?: (status: TodayDoseStatusAction) => void;
 }
+
+async function resolveUserId(deps: TodayDeps): Promise<string | null> {
+  try {
+    if (deps.getUserId) return await deps.getUserId();
+    const { data } = await getSupabaseClient().auth.getSession();
+    return data.session?.user.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Doses older than this are history (care log), not Today. Loading every dose the circle ever
+// had would grow without limit; this window covers "today" in any time zone.
+const DOSE_WINDOW_HOURS = 36;
 
 function defaultTrackDoseAction(status: TodayDoseStatusAction): void {
   void getAppObservability()
@@ -446,9 +529,11 @@ export async function loadTodaySnapshot(deps: TodayDeps = {}): Promise<LoadToday
     };
   }
 
+  const userId = await resolveUserId(deps);
+
   if (deps.isOffline) {
-    const cached = await loadCachedTodaySnapshot(storage);
-    const queue = await loadQueuedDoseCheckOffs(storage);
+    const cached = await loadCachedTodaySnapshot(storage, userId);
+    const queue = await loadQueuedDoseCheckOffs(storage, userId);
     if (cached) {
       return {
         ok: true,
@@ -469,7 +554,11 @@ export async function loadTodaySnapshot(deps: TodayDeps = {}): Promise<LoadToday
 
   try {
     const client = getClient();
-    const circlesRes = await client.from('circles').select('*').limit(1);
+    const circlesRes = await client
+      .from('circles')
+      .select('*')
+      .order('created_at', { ascending: true })
+      .limit(1);
     if (circlesRes.error) {
       throw new Error(circlesRes.error.message);
     }
@@ -489,7 +578,7 @@ export async function loadTodaySnapshot(deps: TodayDeps = {}): Promise<LoadToday
         ok: true,
         snapshot: {
           circle: emptyCircle,
-          memberRole: 'owner',
+          memberRole: 'viewer',
           medications: [],
           doseEvents: [],
           appointments: [],
@@ -507,10 +596,26 @@ export async function loadTodaySnapshot(deps: TodayDeps = {}): Promise<LoadToday
     const parsedCircleRow = circleRowSchema.parse(rawCircle);
     const circle = circleFromRow(parsedCircleRow);
 
+    const nowMs = nowFn().getTime();
+    const windowStart = new Date(nowMs - DOSE_WINDOW_HOURS * 3_600_000).toISOString();
+    const windowEnd = new Date(nowMs + DOSE_WINDOW_HOURS * 3_600_000).toISOString();
+
+    // The role must be the signed-in user's own row. Every member can read every member row of
+    // the circle, so "the first row" is often someone else's role (a viewer would get the
+    // owner's Given and Skip buttons).
     const [membersRes, medsRes, dosesRes, apptsRes, tasksRes] = await Promise.all([
-      client.from('circle_members').select('*').eq('circle_id', circle.id),
+      client
+        .from('circle_members')
+        .select('role')
+        .eq('circle_id', circle.id)
+        .eq('user_id', userId ?? '00000000-0000-0000-0000-000000000000'),
       client.from('medications').select('*').eq('circle_id', circle.id),
-      client.from('dose_events').select('*').eq('circle_id', circle.id),
+      client
+        .from('dose_events')
+        .select('*')
+        .eq('circle_id', circle.id)
+        .gte('due_at', windowStart)
+        .lte('due_at', windowEnd),
       client.from('appointments').select('*').eq('circle_id', circle.id),
       client.from('tasks').select('*').eq('circle_id', circle.id),
     ]);
@@ -524,7 +629,8 @@ export async function loadTodaySnapshot(deps: TodayDeps = {}): Promise<LoadToday
     const memberRows = Array.isArray(membersRes.data) ? membersRes.data : [];
     const firstRole = (memberRows[0] as { role?: unknown } | undefined)?.role;
     const roleParsed = memberRoleSchema.safeParse(firstRole);
-    const memberRole: MemberRole = roleParsed.success ? roleParsed.data : 'owner';
+    // Unknown role: show no edit buttons. The server refuses writes anyway.
+    const memberRole: MemberRole = roleParsed.success ? roleParsed.data : 'viewer';
 
     const medications = (Array.isArray(medsRes.data) ? medsRes.data : []).map((row) =>
       medicationFromRow(medicationRowSchema.parse(row)),
@@ -551,7 +657,7 @@ export async function loadTodaySnapshot(deps: TodayDeps = {}): Promise<LoadToday
       return taskFromRow(taskRowSchema.parse(normalized));
     });
 
-    const queue = await loadQueuedDoseCheckOffs(storage);
+    const queue = await loadQueuedDoseCheckOffs(storage, userId);
     const rawSnapshot: TodaySnapshot = {
       circle,
       memberRole,
@@ -560,6 +666,7 @@ export async function loadTodaySnapshot(deps: TodayDeps = {}): Promise<LoadToday
       appointments,
       tasks,
       fetchedAt: nowFn().toISOString(),
+      userId,
     };
     const snapshot = applyQueuedCheckOffsToSnapshot(rawSnapshot, queue);
     await saveCachedTodaySnapshot(snapshot, storage);
@@ -574,8 +681,8 @@ export async function loadTodaySnapshot(deps: TodayDeps = {}): Promise<LoadToday
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const offline = isNetworkFailureMessage(message);
-    const cached = await loadCachedTodaySnapshot(storage);
-    const queue = await loadQueuedDoseCheckOffs(storage);
+    const cached = await loadCachedTodaySnapshot(storage, userId);
+    const queue = await loadQueuedDoseCheckOffs(storage, userId);
     if (cached) {
       return {
         ok: true,
@@ -611,8 +718,9 @@ async function updateCachedDoseStatus(
   status: TodayDoseStatusAction,
   actedAt: string,
   storage: TodayStorageAdapter,
+  userId?: string | null,
 ): Promise<void> {
-  const cached = await loadCachedTodaySnapshot(storage);
+  const cached = await loadCachedTodaySnapshot(storage, userId);
   if (!cached) return;
   const updated: TodaySnapshot = {
     ...cached,
@@ -628,10 +736,13 @@ async function enqueueCheckOffItem(
   storage: TodayStorageAdapter,
 ): Promise<QueuedDoseCheckOff[]> {
   const existing = await loadQueuedDoseCheckOffs(storage);
-  const filtered = existing.filter((entry) => entry.doseEventId !== item.doseEventId);
+  const filtered = existing.filter(
+    (entry) =>
+      !(entry.doseEventId === item.doseEventId && (entry.userId ?? null) === (item.userId ?? null)),
+  );
   const nextQueue = [...filtered, item];
   await saveQueuedDoseCheckOffs(nextQueue, storage);
-  return nextQueue;
+  return nextQueue.filter((entry) => (entry.userId ?? null) === (item.userId ?? null));
 }
 
 export async function checkOffDose(
@@ -654,34 +765,34 @@ export async function checkOffDose(
   const nowIso = (deps.now ?? (() => new Date()))().toISOString();
   const trackDoseAction = deps.trackDoseAction ?? defaultTrackDoseAction;
   const mocks = loadCareCircleMocks(deps.env);
+  const userId = mocks ? null : await resolveUserId(deps);
+  const status = statusParsed.data;
 
-  if (deps.isOffline) {
+  const queueIt = async (): Promise<CheckOffDoseResult> => {
     const queue = await enqueueCheckOffItem(
-      {
-        doseEventId: input.doseEventId,
-        status: statusParsed.data,
-        actedAt: nowIso,
-      },
+      { doseEventId: input.doseEventId, status, actedAt: nowIso, userId },
       storage,
     );
     if (mocks && mockSnapshotState) {
       mockSnapshotState = {
         ...mockSnapshotState,
         doseEvents: mockSnapshotState.doseEvents.map((dose) =>
-          dose.id === input.doseEventId
-            ? { ...dose, status: statusParsed.data, actedAt: nowIso }
-            : dose,
+          dose.id === input.doseEventId ? { ...dose, status, actedAt: nowIso } : dose,
         ),
       };
     }
-    await updateCachedDoseStatus(input.doseEventId, statusParsed.data, nowIso, storage);
+    await updateCachedDoseStatus(input.doseEventId, status, nowIso, storage, userId);
     return {
       ok: true,
       doseEventId: input.doseEventId,
-      status: statusParsed.data,
+      status,
       queued: true,
       queuedCount: queue.length,
     };
+  };
+
+  if (deps.isOffline) {
+    return queueIt();
   }
 
   if (mocks) {
@@ -689,22 +800,20 @@ export async function checkOffDose(
     mockSnapshotState = {
       ...base,
       doseEvents: base.doseEvents.map((dose) =>
-        dose.id === input.doseEventId
-          ? { ...dose, status: statusParsed.data, actedAt: nowIso }
-          : dose,
+        dose.id === input.doseEventId ? { ...dose, status, actedAt: nowIso } : dose,
       ),
     };
     await saveCachedTodaySnapshot(mockSnapshotState, storage);
     try {
-      trackDoseAction(statusParsed.data);
+      trackDoseAction(status);
     } catch {
       // Analytics errors must not fail user dose actions.
     }
-    const queue = await loadQueuedDoseCheckOffs(storage);
+    const queue = await loadQueuedDoseCheckOffs(storage, null);
     return {
       ok: true,
       doseEventId: input.doseEventId,
-      status: statusParsed.data,
+      status,
       queued: false,
       queuedCount: queue.length,
     };
@@ -716,64 +825,34 @@ export async function checkOffDose(
     const client = getClient();
     const { error } = await client.rpc('set_dose_status', {
       doseEventId: input.doseEventId,
-      status: statusParsed.data,
+      status,
     });
 
     if (error) {
       if (isNetworkFailureMessage(error.message ?? '', (error as { code?: string }).code)) {
-        const queue = await enqueueCheckOffItem(
-          {
-            doseEventId: input.doseEventId,
-            status: statusParsed.data,
-            actedAt: nowIso,
-          },
-          storage,
-        );
-        await updateCachedDoseStatus(input.doseEventId, statusParsed.data, nowIso, storage);
-        return {
-          ok: true,
-          doseEventId: input.doseEventId,
-          status: statusParsed.data,
-          queued: true,
-          queuedCount: queue.length,
-        };
+        return queueIt();
       }
       return { ok: false, errorCode: 'CHECKOFF_FAILED' };
     }
 
-    await updateCachedDoseStatus(input.doseEventId, statusParsed.data, nowIso, storage);
+    await updateCachedDoseStatus(input.doseEventId, status, nowIso, storage, userId);
     try {
-      trackDoseAction(statusParsed.data);
+      trackDoseAction(status);
     } catch {
       // Analytics errors must not fail user dose actions.
     }
-    const queue = await loadQueuedDoseCheckOffs(storage);
+    const queue = await loadQueuedDoseCheckOffs(storage, userId);
     return {
       ok: true,
       doseEventId: input.doseEventId,
-      status: statusParsed.data,
+      status,
       queued: false,
       queuedCount: queue.length,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (isNetworkFailureMessage(message)) {
-      const queue = await enqueueCheckOffItem(
-        {
-          doseEventId: input.doseEventId,
-          status: statusParsed.data,
-          actedAt: nowIso,
-        },
-        storage,
-      );
-      await updateCachedDoseStatus(input.doseEventId, statusParsed.data, nowIso, storage);
-      return {
-        ok: true,
-        doseEventId: input.doseEventId,
-        status: statusParsed.data,
-        queued: true,
-        queuedCount: queue.length,
-      };
+      return queueIt();
     }
     return { ok: false, errorCode: 'CHECKOFF_FAILED' };
   }
@@ -784,29 +863,53 @@ export interface FlushQueuedDoseCheckOffsResult {
   isOffline: boolean;
   flushedCount: number;
   remainingCount: number;
+  /**
+   * Check-offs the server refused for a reason other than the network (the dose was already
+   * recorded or marked missed, the person lost their role, the dose was deleted after a
+   * schedule edit). They are removed from the queue, so one refused item can never block the
+   * ones behind it, and the screen reloads to show what the server really has.
+   */
+  refusedCount: number;
 }
 
 export async function flushQueuedDoseCheckOffs(
   deps: TodayDeps = {},
 ): Promise<FlushQueuedDoseCheckOffsResult> {
   const storage = deps.storage ?? defaultTodayStorage;
-  const queue = await loadQueuedDoseCheckOffs(storage);
+  const mocks = loadCareCircleMocks(deps.env);
+  const userId = mocks ? null : await resolveUserId(deps);
+  const all = await loadQueuedDoseCheckOffs(storage);
+  // Only the signed-in user's check-offs are sent. Another account's stay queued until that
+  // account signs in again on this phone.
+  const others = all.filter((item) => (item.userId ?? null) !== userId);
+  const queue = all.filter((item) => (item.userId ?? null) === userId);
 
   if (queue.length === 0) {
-    return { ok: true, isOffline: Boolean(deps.isOffline), flushedCount: 0, remainingCount: 0 };
+    return {
+      ok: true,
+      isOffline: Boolean(deps.isOffline),
+      flushedCount: 0,
+      remainingCount: 0,
+      refusedCount: 0,
+    };
   }
 
   if (deps.isOffline) {
-    return { ok: false, isOffline: true, flushedCount: 0, remainingCount: queue.length };
+    return {
+      ok: false,
+      isOffline: true,
+      flushedCount: 0,
+      remainingCount: queue.length,
+      refusedCount: 0,
+    };
   }
 
-  const mocks = loadCareCircleMocks(deps.env);
   const trackDoseAction = deps.trackDoseAction ?? defaultTrackDoseAction;
 
   if (mocks) {
     const base = getOrInitMockTodaySnapshot(mocks);
     mockSnapshotState = applyQueuedCheckOffsToSnapshot(base, queue);
-    await saveQueuedDoseCheckOffs([], storage);
+    await saveQueuedDoseCheckOffs(others, storage);
     await saveCachedTodaySnapshot(mockSnapshotState, storage);
     for (const item of queue) {
       try {
@@ -815,55 +918,65 @@ export async function flushQueuedDoseCheckOffs(
         // Ignore analytics failure.
       }
     }
-    return { ok: true, isOffline: false, flushedCount: queue.length, remainingCount: 0 };
+    return {
+      ok: true,
+      isOffline: false,
+      flushedCount: queue.length,
+      remainingCount: 0,
+      refusedCount: 0,
+    };
   }
 
   const getClient = deps.getClient ?? getSupabaseClient;
   const remaining = [...queue];
   let flushedCount = 0;
+  let refusedCount = 0;
+
+  const stopOffline = async (isOffline: boolean): Promise<FlushQueuedDoseCheckOffsResult> => {
+    await saveQueuedDoseCheckOffs([...others, ...remaining], storage);
+    return {
+      ok: false,
+      isOffline,
+      flushedCount,
+      remainingCount: remaining.length,
+      refusedCount,
+    };
+  };
 
   while (remaining.length > 0) {
     const current = remaining[0]!;
+    let error: { message?: string; code?: string } | null;
     try {
       const client = getClient();
-      const { error } = await client.rpc('set_dose_status', {
+      ({ error } = await client.rpc('set_dose_status', {
         doseEventId: current.doseEventId,
         status: current.status,
-      });
-
-      if (error) {
-        const isNet = isNetworkFailureMessage(
-          error.message ?? '',
-          (error as { code?: string }).code,
-        );
-        await saveQueuedDoseCheckOffs(remaining, storage);
-        return {
-          ok: false,
-          isOffline: isNet,
-          flushedCount,
-          remainingCount: remaining.length,
-        };
-      }
-
-      remaining.shift();
-      flushedCount += 1;
-      await saveQueuedDoseCheckOffs(remaining, storage);
-      try {
-        trackDoseAction(current.status);
-      } catch {
-        // Ignore analytics failure.
-      }
+      }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await saveQueuedDoseCheckOffs(remaining, storage);
-      return {
-        ok: false,
-        isOffline: isNetworkFailureMessage(message),
-        flushedCount,
-        remainingCount: remaining.length,
-      };
+      if (isNetworkFailureMessage(message)) {
+        return stopOffline(true);
+      }
+      error = { message };
+    }
+
+    if (error && isNetworkFailureMessage(error.message ?? '', error.code)) {
+      return stopOffline(true);
+    }
+
+    remaining.shift();
+    await saveQueuedDoseCheckOffs([...others, ...remaining], storage);
+    if (error) {
+      refusedCount += 1;
+      continue;
+    }
+    flushedCount += 1;
+    try {
+      trackDoseAction(current.status);
+    } catch {
+      // Ignore analytics failure.
     }
   }
 
-  return { ok: true, isOffline: false, flushedCount, remainingCount: 0 };
+  return { ok: true, isOffline: false, flushedCount, remainingCount: 0, refusedCount };
 }

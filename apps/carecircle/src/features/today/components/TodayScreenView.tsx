@@ -20,6 +20,9 @@ import {
   type TodayDoseStatusAction,
 } from '../api';
 
+/** A short message above the agenda: a check-off was not saved, or the server refused a queued one. */
+export type TodayNotice = 'checkOffFailed' | 'refused';
+
 export interface TodayScreenViewProps {
   circleTitle?: string;
   agenda?: TodayAgenda | null;
@@ -27,6 +30,7 @@ export interface TodayScreenViewProps {
   hasError?: boolean;
   isOffline?: boolean;
   queuedCount?: number;
+  notice?: TodayNotice | null;
   onRetry?: () => void;
   onCheckOffDose?: (doseEventId: string, status: TodayDoseStatusAction) => void;
   onOpenAppointment?: (appointmentId: string) => void;
@@ -66,13 +70,15 @@ export function TodayScreenView({
   hasError = false,
   isOffline = false,
   queuedCount = 0,
+  notice = null,
   onRetry,
   onCheckOffDose,
   onOpenAppointment,
   onOpenTask,
 }: TodayScreenViewProps) {
   const { colors, spacing, typography } = useTheme();
-  const canEditDoses = (agenda?.memberRole ?? 'owner') !== 'viewer';
+  // Unknown role: no edit buttons (the server refuses a viewer's writes anyway).
+  const canEditDoses = agenda?.memberRole === 'owner' || agenda?.memberRole === 'helper';
 
   return (
     <Screen accessibilityLabel={en.today.title}>
@@ -137,6 +143,19 @@ export function TodayScreenView({
                       />
                     </View>
                   ) : null}
+                </Card>
+              </View>
+            ) : null}
+
+            {notice ? (
+              <View testID={`today-notice-${notice}`}>
+                <Card tone="warning" accessibilityLabel={en.today[`${notice}Title`]}>
+                  <Text style={[typography.subtitle, { color: colors.onWarningSurface }]}>
+                    {en.today[`${notice}Title`]}
+                  </Text>
+                  <Text style={[typography.bodySmall, { color: colors.onWarningSurface }]}>
+                    {en.today[`${notice}Message`]}
+                  </Text>
                 </Card>
               </View>
             ) : null}

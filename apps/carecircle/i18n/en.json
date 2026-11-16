@@ -175,6 +175,10 @@
     "statusPending": "Pending",
     "statusGiven": "Given",
     "statusSkipped": "Skipped",
-    "statusMissed": "Missed"
+    "statusMissed": "Missed",
+    "checkOffFailedTitle": "Not saved",
+    "checkOffFailedMessage": "This check-off was not saved. The dose is shown as it was. Please try again.",
+    "refusedTitle": "Some check-offs were not saved",
+    "refusedMessage": "A check-off made offline could not be saved, for example because someone else recorded the dose first. Today now shows what was saved."
   }
 }

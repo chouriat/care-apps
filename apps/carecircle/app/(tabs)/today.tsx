@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import { loadCareCircleMocks } from '../../src/features/mocks';
 import {
   DEFAULT_MOCK_NOW_ISO,
@@ -11,7 +12,10 @@ import {
   type TodayDoseStatusAction,
   type TodaySnapshot,
 } from '../../src/features/today/api';
-import { TodayScreenView } from '../../src/features/today/components';
+import { TodayScreenView, type TodayNotice } from '../../src/features/today/components';
+
+/** While offline or with check-offs waiting, try again this often. */
+export const TODAY_RETRY_INTERVAL_MS = 30_000;
 
 export interface TodayRouteProps {
   deps?: TodayDeps;
@@ -33,14 +37,17 @@ export default function TodayScreen({ deps, referenceNow }: TodayRouteProps = {}
   const [hasError, setHasError] = useState<boolean>(false);
   const [isOffline, setIsOffline] = useState<boolean>(() => Boolean(deps?.isOffline));
   const [queuedCount, setQueuedCount] = useState<number>(0);
+  const [notice, setNotice] = useState<TodayNotice | null>(null);
   const [reloadToken, setReloadToken] = useState<number>(0);
+  const snapshotRef = useRef<TodaySnapshot | null>(snapshot);
+  snapshotRef.current = snapshot;
 
   const effectiveNow = useMemo(() => {
     if (referenceNow) return referenceNow;
     if (deps?.now) return deps.now();
     if (mocks) return new Date(DEFAULT_MOCK_NOW_ISO);
     return new Date();
-  }, [deps, mocks, referenceNow]);
+  }, [deps, mocks, referenceNow, reloadToken]);
 
   useEffect(() => {
     if (!hasBackend) {
@@ -50,13 +57,16 @@ export default function TodayScreen({ deps, referenceNow }: TodayRouteProps = {}
 
     let cancelled = false;
     void (async () => {
-      if (!mocks && !snapshot) {
+      if (!mocks && !snapshotRef.current) {
         setIsLoading(true);
       }
       setHasError(false);
 
       if (!deps?.isOffline) {
-        await flushQueuedDoseCheckOffs(deps);
+        const flushed = await flushQueuedDoseCheckOffs(deps);
+        if (!cancelled && flushed.refusedCount > 0) {
+          setNotice('refused');
+        }
       }
 
       const res = await loadTodaySnapshot(deps);
@@ -83,9 +93,28 @@ export default function TodayScreen({ deps, referenceNow }: TodayRouteProps = {}
     setReloadToken((n) => n + 1);
   }, []);
 
+  // "Sent when the network returns": the app has no network listener, so try again when the app
+  // comes back to the foreground, and every 30 seconds while offline or while check-offs wait.
+  useEffect(() => {
+    if (!hasBackend || mocks) return;
+    const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
+      if (state === 'active') handleRetry();
+    });
+    return () => sub.remove();
+  }, [handleRetry, hasBackend, mocks]);
+
+  useEffect(() => {
+    if (!hasBackend || mocks || deps?.isOffline) return;
+    if (!isOffline && queuedCount === 0) return;
+    const timer = setInterval(handleRetry, TODAY_RETRY_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [deps?.isOffline, handleRetry, hasBackend, isOffline, mocks, queuedCount]);
+
   const handleCheckOffDose = useCallback(
     (doseEventId: string, status: TodayDoseStatusAction) => {
-      const actedAt = effectiveNow.toISOString();
+      const actedAt = (deps?.now ? deps.now() : mocks ? effectiveNow : new Date()).toISOString();
+      const before = snapshotRef.current?.doseEvents.find((dose) => dose.id === doseEventId);
+      setNotice(null);
       setSnapshot((prev) => {
         if (!prev) return prev;
         return {
@@ -101,7 +130,7 @@ export default function TodayScreen({ deps, referenceNow }: TodayRouteProps = {}
           {
             doseEventId,
             status,
-            memberRole: snapshot?.memberRole,
+            memberRole: snapshotRef.current?.memberRole,
           },
           deps,
         );
@@ -110,10 +139,24 @@ export default function TodayScreen({ deps, referenceNow }: TodayRouteProps = {}
           if (res.queued) {
             setIsOffline(true);
           }
+          return;
+        }
+        // The server did not record it. Never leave "Given" on screen for a dose nobody saved:
+        // put the dose back as it was, say so, and reload what the server has.
+        setSnapshot((prev) => {
+          if (!prev || !before) return prev;
+          return {
+            ...prev,
+            doseEvents: prev.doseEvents.map((dose) => (dose.id === doseEventId ? before : dose)),
+          };
+        });
+        setNotice('checkOffFailed');
+        if (res.errorCode === 'CHECKOFF_FAILED') {
+          handleRetry();
         }
       })();
     },
-    [deps, effectiveNow, snapshot?.memberRole],
+    [deps, effectiveNow, handleRetry, mocks],
   );
 
   const agenda = useMemo(
@@ -136,6 +179,7 @@ export default function TodayScreen({ deps, referenceNow }: TodayRouteProps = {}
       hasError={hasError}
       isOffline={isOffline}
       queuedCount={queuedCount}
+      notice={notice}
       onRetry={handleRetry}
       onCheckOffDose={handleCheckOffDose}
     />

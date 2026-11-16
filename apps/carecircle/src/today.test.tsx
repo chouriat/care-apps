@@ -10,12 +10,14 @@ import {
   loadCachedTodaySnapshot,
   loadQueuedDoseCheckOffs,
   loadTodaySnapshot,
+  memoryTodayStorage,
   resetTodayState,
   selectTodayAgenda,
   type TodayDeps,
   type TodaySnapshot,
 } from './features/today/api';
 import { TodayScreenView } from './features/today/components';
+import { createFakeTodayClient } from './__fixtures__/today-fake-client';
 
 describe('CC-3a Today screen (doses grouped by time, Given/Skip, next appointment, tasks due today, offline cache & queue)', () => {
   const originalMocks = process.env.MOCKS;
@@ -291,6 +293,7 @@ describe('CC-3a Today screen (doses grouped by time, Given/Skip, next appointmen
     const trackedEvents: Array<{ event: string; props: Record<string, unknown> }> = [];
     const deps: TodayDeps = {
       env: { MOCKS: '1' },
+      storage: memoryTodayStorage,
       now: () => new Date(DEFAULT_MOCK_NOW_ISO),
       trackDoseAction: (status) => {
         const props = Core.validateAnalyticsEvent('cc_dose_given', { status });
@@ -392,111 +395,75 @@ describe('CC-3a Today screen (doses grouped by time, Given/Skip, next appointmen
     const doseEveningId = 'c1300001-0000-4000-8000-000000000022';
 
     let networkOnline = true;
-    const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
     const trackedStatuses: string[] = [];
+    const helperUserId = 'c1000001-1111-4111-8111-111111111111';
 
-    const fakeClient = {
-      from: (table: string) => ({
-        select: () => ({
-          limit: async () => {
-            if (!networkOnline) {
-              return { data: null, error: { message: 'Failed to fetch' } };
-            }
-            if (table === 'circles') {
-              return {
-                data: [
-                  {
-                    id: circleId,
-                    name: 'Offline Test Circle',
-                    care_recipient_name: 'Evelyn',
-                    care_recipient_dob: null,
-                    timezone: 'Europe/London',
-                    created_by: null,
-                    created_at: '2026-11-01T12:00:00.000Z',
-                  },
-                ],
-                error: null,
-              };
-            }
-            return { data: [], error: null };
+    const fake = createFakeTodayClient({
+      isOnline: () => networkOnline,
+      tables: {
+        circles: [
+          {
+            id: circleId,
+            name: 'Offline Test Circle',
+            care_recipient_name: 'Evelyn',
+            care_recipient_dob: null,
+            timezone: 'Europe/London',
+            created_by: null,
+            created_at: '2026-11-01T12:00:00.000Z',
           },
-          eq: async () => {
-            if (!networkOnline) {
-              return { data: null, error: { message: 'Failed to fetch' } };
-            }
-            if (table === 'circle_members') {
-              return {
-                data: [
-                  {
-                    circle_id: circleId,
-                    user_id: 'c1000001-1111-4111-8111-111111111111',
-                    role: 'helper',
-                    joined_at: '2026-11-01T12:00:00.000Z',
-                  },
-                ],
-                error: null,
-              };
-            }
-            if (table === 'medications') {
-              return {
-                data: [
-                  {
-                    id: medId,
-                    circle_id: circleId,
-                    name: 'Metformin',
-                    strength: '500 mg',
-                    dose_text: '1 tablet',
-                    schedule: { kind: 'daily', times: ['08:00', '20:00'] },
-                    instructions: 'Take with food',
-                    start_date: '2026-11-01',
-                    end_date: null,
-                    active: true,
-                    source: 'manual',
-                  },
-                ],
-                error: null,
-              };
-            }
-            if (table === 'dose_events') {
-              return {
-                data: [
-                  {
-                    id: doseMorningId,
-                    medication_id: medId,
-                    circle_id: circleId,
-                    due_at: '2026-11-15T08:00:00.000Z',
-                    status: 'pending',
-                    acted_by: null,
-                    acted_at: null,
-                  },
-                  {
-                    id: doseEveningId,
-                    medication_id: medId,
-                    circle_id: circleId,
-                    due_at: '2026-11-15T20:00:00.000Z',
-                    status: 'pending',
-                    acted_by: null,
-                    acted_at: null,
-                  },
-                ],
-                error: null,
-              };
-            }
-            return { data: [], error: null };
+        ],
+        circle_members: [
+          {
+            circle_id: circleId,
+            user_id: helperUserId,
+            role: 'helper',
+            joined_at: '2026-11-01T12:00:00.000Z',
           },
-        }),
-      }),
-      rpc: async (fn: string, args: Record<string, unknown>) => {
-        if (!networkOnline) {
-          return { data: null, error: { message: 'Network request failed' } };
-        }
-        rpcCalls.push({ fn, args });
-        return { data: { id: args.doseEventId, status: args.status }, error: null };
+        ],
+        medications: [
+          {
+            id: medId,
+            circle_id: circleId,
+            name: 'Metformin',
+            strength: '500 mg',
+            dose_text: '1 tablet',
+            schedule: { kind: 'daily', times: ['08:00', '20:00'] },
+            instructions: 'Take with food',
+            start_date: '2026-11-01',
+            end_date: null,
+            active: true,
+            source: 'manual',
+          },
+        ],
+        dose_events: [
+          {
+            id: doseMorningId,
+            medication_id: medId,
+            circle_id: circleId,
+            due_at: '2026-11-15T08:00:00.000Z',
+            status: 'pending',
+            acted_by: null,
+            acted_at: null,
+          },
+          {
+            id: doseEveningId,
+            medication_id: medId,
+            circle_id: circleId,
+            due_at: '2026-11-15T20:00:00.000Z',
+            status: 'pending',
+            acted_by: null,
+            acted_at: null,
+          },
+        ],
       },
-    };
+    });
+    const rpcCalls = fake.rpcCalls;
+    const fakeClient = fake.client;
 
     const getDeps = (): TodayDeps => ({
-      getClient: () => fakeClient as never,
+      getClient: () => fakeClient,
+      getUserId: async () => helperUserId,
+      storage: memoryTodayStorage,
       now: () => new Date('2026-11-15T12:00:00.000Z'),
       trackDoseAction: (status) => {
         trackedStatuses.push(status);
@@ -505,21 +472,13 @@ describe('CC-3a Today screen (doses grouped by time, Given/Skip, next appointmen
 
     // 1. Initial online load caches the snapshot.
     const onlineLoad = await loadTodaySnapshot(getDeps());
-    expect(onlineLoad.ok).toBe(true);
-    if (onlineLoad.ok) {
-      expect(onlineLoad.fromCache).toBe(false);
-      expect(onlineLoad.isOffline).toBe(false);
-    }
+    expect(onlineLoad).toMatchObject({ ok: true, fromCache: false, isOffline: false });
 
     // 2. Network drops. Loading Today falls back to the cached snapshot (`fromCache: true, isOffline: true`).
     networkOnline = false;
     const offlineLoad = await loadTodaySnapshot(getDeps());
-    expect(offlineLoad.ok).toBe(true);
-    if (offlineLoad.ok) {
-      expect(offlineLoad.fromCache).toBe(true);
-      expect(offlineLoad.isOffline).toBe(true);
-      expect(offlineLoad.snapshot.doseEvents).toHaveLength(2);
-    }
+    expect(offlineLoad).toMatchObject({ ok: true, fromCache: true, isOffline: true });
+    expect(offlineLoad.ok && offlineLoad.snapshot.doseEvents).toHaveLength(2);
 
     // 3. While offline, caregiver marks morning dose Given and evening dose Skipped.
     const check1 = await checkOffDose(
@@ -548,9 +507,9 @@ describe('CC-3a Today screen (doses grouped by time, Given/Skip, next appointmen
 
     // No server RPC succeeded while offline, and both actions are persisted in the queue and cache.
     expect(rpcCalls).toHaveLength(0);
-    expect(await loadQueuedDoseCheckOffs()).toHaveLength(2);
+    expect(await loadQueuedDoseCheckOffs(memoryTodayStorage)).toHaveLength(2);
 
-    const cachedWhileOffline = await loadCachedTodaySnapshot();
+    const cachedWhileOffline = await loadCachedTodaySnapshot(memoryTodayStorage);
     expect(cachedWhileOffline?.doseEvents.find((d) => d.id === doseMorningId)?.status).toBe(
       'given',
     );
@@ -589,6 +548,7 @@ describe('CC-3a Today screen (doses grouped by time, Given/Skip, next appointmen
       isOffline: false,
       flushedCount: 2,
       remainingCount: 0,
+      refusedCount: 0,
     });
 
     expect(rpcCalls).toEqual([
@@ -596,6 +556,6 @@ describe('CC-3a Today screen (doses grouped by time, Given/Skip, next appointmen
       { fn: 'set_dose_status', args: { doseEventId: doseEveningId, status: 'skipped' } },
     ]);
     expect(trackedStatuses).toEqual(['given', 'skipped']);
-    expect(await loadQueuedDoseCheckOffs()).toHaveLength(0);
+    expect(await loadQueuedDoseCheckOffs(memoryTodayStorage)).toHaveLength(0);
   });
 });

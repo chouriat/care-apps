@@ -1,1 +1,1 @@
-export { TodayScreenView, type TodayScreenViewProps } from './TodayScreenView';
+export { TodayScreenView, type TodayNotice, type TodayScreenViewProps } from './TodayScreenView';
