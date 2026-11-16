@@ -130,8 +130,9 @@ select is(pg_temp.write_count($$update public.dose_events set status = 'given', 
   where id = 'da300000-0000-4000-8000-000000000001'$$), -1, 'a helper cannot mark a dose given in the owner''s name');
 select is(pg_temp.write_count($$update public.tasks set done_at = now(), done_by = 'da000001-0000-4000-8000-000000000001'
   where id = 'da500000-0000-4000-8000-000000000001'$$), -1, 'a helper cannot complete a task in the owner''s name');
-select is(pg_temp.write_count($$update public.dose_events set status = 'given', acted_by = 'da000002-0000-4000-8000-000000000002', acted_at = now()
-  where id = 'da300000-0000-4000-8000-000000000001'$$), 1, 'a helper marks a dose given as themselves');
+-- CC-2b: doses are marked only through set_dose_status, which always records the caller.
+select is(pg_temp.write_count($$select public.set_dose_status("doseEventId" := 'da300000-0000-4000-8000-000000000001', status := 'given')$$),
+  1, 'a helper marks a dose given as themselves (through set_dose_status)');
 select pg_temp.login(null);
 select is((select created_by from public.log_entries
             where circle_id = 'dac00000-0000-4000-8000-000000000001' and type = 'dose'

@@ -83,6 +83,7 @@ function createFakeRealtimeClient() {
     channelName: string;
     filter: PostgresChangesFilter;
     callback: (payload: PostgresChangesPayload) => void;
+    closed: () => boolean;
   }> = [];
   let subscribedCount = 0;
   let unsubscribedCount = 0;
@@ -90,9 +91,10 @@ function createFakeRealtimeClient() {
 
   const client: RealtimeSupabaseClientLike = {
     channel(channelName: string) {
-      const ch: RealtimeChannelLike = {
+      let closed = false;
+      const ch: RealtimeChannelLike & { close: () => void } = {
         on(_type, filter, callback) {
-          subscriptions.push({ channelName, filter, callback });
+          subscriptions.push({ channelName, filter, callback, closed: () => closed });
           return ch;
         },
         subscribe() {
@@ -101,15 +103,35 @@ function createFakeRealtimeClient() {
         },
         unsubscribe() {
           unsubscribedCount += 1;
+          closed = true;
           return Promise.resolve('ok');
+        },
+        close() {
+          closed = true;
         },
       };
       return ch;
     },
-    removeChannel() {
+    removeChannel(channel) {
       removedChannelCount += 1;
+      (channel as RealtimeChannelLike & { close: () => void }).close();
       return Promise.resolve('ok');
     },
+  };
+
+  // Like Supabase Realtime: a change reaches a listener only if its event matches the listener's
+  // `event` ('*' or the same type) and the channel is still open. With the default replica
+  // identity, `old` holds only the primary key, never the previous status.
+  const emit = (
+    eventType: PostgresChangesPayload['eventType'],
+    newRow: Record<string, unknown>,
+    oldRow?: Record<string, unknown>,
+  ) => {
+    for (const sub of subscriptions) {
+      if (sub.closed()) continue;
+      if (sub.filter.event !== '*' && sub.filter.event !== eventType) continue;
+      sub.callback({ eventType, new: newRow, old: oldRow });
+    }
   };
 
   return {
@@ -120,17 +142,13 @@ function createFakeRealtimeClient() {
       unsubscribedCount,
       removedChannelCount,
     }),
-    emitUpdate: (newRow: Record<string, unknown>, oldRow?: Record<string, unknown>) => {
-      for (const sub of subscriptions) {
-        sub.callback({
-          eventType: 'UPDATE',
-          new: newRow,
-          old: oldRow,
-        });
-      }
-    },
+    emit,
+    emitUpdate: (newRow: Record<string, unknown>, oldRow?: Record<string, unknown>) =>
+      emit('UPDATE', newRow, oldRow ?? { id: newRow.id }),
   };
 }
+
+const flushListeners = () => new Promise((resolve) => setTimeout(resolve, 20));
 
 const CIRCLE_ID = CARECIRCLE_MOCKS.circle.id;
 const OTHER_CIRCLE_ID = 'c1c00002-0000-4000-8000-000000000002';
@@ -166,8 +184,9 @@ describe('CC-2b Realtime dose_events subscription and cc_dose_given / cc_dose_mi
     });
 
     expect(fakeRealtime.subscriptions).toHaveLength(1);
-    expect(fakeRealtime.subscriptions[0]!.filter).toEqual({
-      event: '*',
+    const { event, ...rest } = fakeRealtime.subscriptions[0]!.filter;
+    expect(['*', 'UPDATE']).toContain(event);
+    expect(rest).toEqual({
       schema: 'public',
       table: 'dose_events',
       filter: `circle_id=eq.${CIRCLE_ID}`,
@@ -218,10 +237,15 @@ describe('CC-2b Realtime dose_events subscription and cc_dose_given / cc_dose_mi
     expect(cachedDose?.status).toBe('given');
     expect(cachedDose?.actedBy).toBe(HELPER_ID);
 
-    // Unsubscribing cleans up the channel
+    // Unsubscribing cleans up the channel, and later changes no longer reach the cache
     unsubscribe();
     const counts = fakeRealtime.getCounts();
     expect(counts.unsubscribedCount + counts.removedChannelCount).toBeGreaterThanOrEqual(1);
+    fakeRealtime.emitUpdate({ ...updatedRow, status: 'skipped' });
+    await flushListeners();
+    expect(receivedUpdates).toHaveLength(1);
+    const afterUnmount = await loadCachedTodaySnapshot(memoryTodayStorage, HELPER_ID);
+    expect(afterUnmount?.doseEvents.find((d) => d.id === PENDING_DOSE_ID)?.status).toBe('given');
   });
 
   it('fires cc_dose_given on check-off and cc_dose_missed when a pending dose becomes missed, with no medication name, dose, or free text', async () => {
@@ -262,11 +286,13 @@ describe('CC-2b Realtime dose_events subscription and cc_dose_given / cc_dose_mi
     await saveCachedTodaySnapshot(initialSnapshot, memoryTodayStorage);
 
     const fakeRealtime = createFakeRealtimeClient();
+    const missedFlags: boolean[] = [];
     const unsubscribe = subscribeToCircleDoseEvents({
       circleId: CIRCLE_ID,
       getClient: () => fakeRealtime.client,
       storage: memoryTodayStorage,
       userId: HELPER_ID,
+      onDoseEventChange: (_dose, meta) => missedFlags.push(meta.newlyMissed),
       trackDoseMissed: (missedCount) => {
         const validated = validateAnalyticsEvent('cc_dose_missed', { missedCount });
         trackedEvents.push({ event: 'cc_dose_missed', props: validated });
@@ -282,7 +308,8 @@ describe('CC-2b Realtime dose_events subscription and cc_dose_given / cc_dose_mi
       acted_by: null,
       acted_at: null,
     };
-    fakeRealtime.emitUpdate(missedRow, { status: 'pending' });
+    // Realtime sends only the primary key in `old`, so "newly missed" must come from the cached dose.
+    fakeRealtime.emitUpdate(missedRow, { id: PENDING_DOSE_ID });
 
     // Wait for async cache read/write inside the listener if needed
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -293,14 +320,109 @@ describe('CC-2b Realtime dose_events subscription and cc_dose_given / cc_dose_mi
     ]);
 
     // Emitting the same 'missed' row a second time does not fire cc_dose_missed again
-    fakeRealtime.emitUpdate(missedRow, { status: 'missed' });
+    fakeRealtime.emitUpdate(missedRow, { id: PENDING_DOSE_ID });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(trackedEvents).toHaveLength(2);
+    // The first missed update is newly missed; the repeat is not.
+    expect(missedFlags).toEqual([true, false]);
 
     const serialized = JSON.stringify(trackedEvents);
     expect(serialized).not.toContain('Metformin');
     expect(serialized).not.toContain('500 mg');
     expect(serialized).not.toContain('1 tablet');
+
+    unsubscribe();
+  });
+
+  it('by default sends cc_dose_given and cc_dose_missed through the app analytics client, with only { status } and { missedCount }', async () => {
+    const { subscribeToCircleDoseEvents } = loadDoseRealtimeModule();
+    const initialSnapshot = {
+      ...buildSnapshotFromMocks(CARECIRCLE_MOCKS, 'owner'),
+      userId: HELPER_ID,
+    };
+    await saveCachedTodaySnapshot(initialSnapshot, memoryTodayStorage);
+    const OTHER_DOSE_ID = 'c13000ff-0000-4000-8000-0000000000ff';
+
+    // No trackDoseAction / trackDoseMissed passed: the default wiring must send the events.
+    const result = await checkOffDose(
+      { doseEventId: OTHER_DOSE_ID, status: 'given', memberRole: 'helper' },
+      {
+        getClient: () =>
+          ({
+            rpc: async () => ({ data: { id: OTHER_DOSE_ID, status: 'given' }, error: null }),
+          }) as never,
+        getUserId: async () => HELPER_ID,
+        storage: memoryTodayStorage,
+      },
+    );
+    expect(result.ok).toBe(true);
+
+    const fakeRealtime = createFakeRealtimeClient();
+    const unsubscribe = subscribeToCircleDoseEvents({
+      circleId: CIRCLE_ID,
+      getClient: () => fakeRealtime.client,
+      storage: memoryTodayStorage,
+      userId: HELPER_ID,
+    });
+    fakeRealtime.emitUpdate({
+      id: PENDING_DOSE_ID,
+      medication_id: MED_ID,
+      circle_id: CIRCLE_ID,
+      due_at: '2026-11-15T20:00:00.000Z',
+      status: 'missed',
+      acted_by: null,
+      acted_at: null,
+    });
+    await flushListeners();
+    unsubscribe();
+
+    expect(mockTrack.mock.calls).toEqual([
+      ['cc_dose_given', { status: 'given' }],
+      ['cc_dose_missed', { missedCount: 1 }],
+    ]);
+  });
+
+  it('ignores deletes and rows that do not parse, without throwing or changing the cache', async () => {
+    const { subscribeToCircleDoseEvents } = loadDoseRealtimeModule();
+    const initialSnapshot = {
+      ...buildSnapshotFromMocks(CARECIRCLE_MOCKS, 'owner'),
+      userId: HELPER_ID,
+    };
+    await saveCachedTodaySnapshot(initialSnapshot, memoryTodayStorage);
+    const before = await loadCachedTodaySnapshot(memoryTodayStorage, HELPER_ID);
+
+    const fakeRealtime = createFakeRealtimeClient();
+    const changes: DoseEvent[] = [];
+    const missed: number[] = [];
+    const unsubscribe = subscribeToCircleDoseEvents({
+      circleId: CIRCLE_ID,
+      getClient: () => fakeRealtime.client,
+      storage: memoryTodayStorage,
+      userId: HELPER_ID,
+      onDoseEventChange: (dose) => changes.push(dose),
+      trackDoseMissed: (count) => missed.push(count),
+    });
+
+    expect(() => {
+      // A schedule edit deletes future pending doses: `new` is empty, `old` has only the id.
+      fakeRealtime.emit('DELETE', {}, { id: PENDING_DOSE_ID });
+      // A row with an unknown status or a missing id must not reach the cache.
+      fakeRealtime.emitUpdate({
+        id: PENDING_DOSE_ID,
+        medication_id: MED_ID,
+        circle_id: CIRCLE_ID,
+        due_at: '2026-11-15T20:00:00.000Z',
+        status: 'lost',
+        acted_by: null,
+        acted_at: null,
+      });
+      fakeRealtime.emitUpdate({ circle_id: CIRCLE_ID, status: 'missed' });
+    }).not.toThrow();
+    await flushListeners();
+
+    expect(changes).toHaveLength(0);
+    expect(missed).toHaveLength(0);
+    expect(await loadCachedTodaySnapshot(memoryTodayStorage, HELPER_ID)).toEqual(before);
 
     unsubscribe();
   });
