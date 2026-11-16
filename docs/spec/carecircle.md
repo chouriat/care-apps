@@ -120,7 +120,7 @@ Times are local to `circles.timezone`. RLS: every table with `circle_id` allows 
 
 1. A scheduled Edge Function `materialize-doses` runs every hour and creates `dose_events` for the next 48 hours from each active medication. The unique key makes it idempotent.
 2. `as_needed` meds create no events; the user logs "Gave a dose now", which inserts a `given` event at the current time.
-3. A dose still `pending` 60 minutes after `due_at` becomes `missed` (job `mark-missed`, every 5 minutes) and sends a push to the owner and the assigned helper.
+3. A dose still `pending` 60 minutes after `due_at` becomes `missed` (job `mark-missed`, every 5 minutes) and sends a push to the owner and every helper (never viewers).
 4. Editing a schedule deletes only future `pending` events and re-materializes. History is never rewritten.
 5. Daylight saving: a time that does not exist (02:30 on spring-forward) moves to the next valid minute; a repeated time fires once.
 
@@ -192,7 +192,7 @@ Realtime: the app subscribes to `dose_events`, `tasks` and `appointments` filter
 
 - [ ] Realtime: with two clients in one circle, a check-off on client A shows on client B within 2 seconds on Wi-Fi in 9 of 10 runs
 - [ ] **[safety]** Dose engine unit tests (fake clock) cover: daily, weekly, every_n_days, as_needed (creates no events), DST spring-forward (02:30 fires at 03:00), DST fall-back (01:30 fires once), schedule edit (deletes only future `pending` events); running `materialize-doses` twice creates zero duplicates
-- [ ] **[safety]** A dose still `pending` 60 minutes after `due_at` is `missed` after the next `mark-missed` run, and one push each is queued for the owner and the assigned helper
+- [ ] **[safety]** A dose still `pending` 60 minutes after `due_at` is `missed` after the next `mark-missed` run, and one push each is queued for the owner and every helper
 - [ ] Prescription photo: on the 20 labels in `evals/carecircle/labels/`, at least 90% of fields (name, strength, doseText, schedule) are correct after the confirm screen; an e2e test proves no `medications` row exists before Save is tapped
 - [ ] Visit note: the 5-minute audio fixture returns a schema-valid draft in under 15 seconds at p90 over 10 runs on staging
 - [ ] **[safety]** pgTAP RLS tests for every table: a non-member reads 0 rows; a viewer's insert, update and delete fail; a helper cannot create invites or change roles; nobody can update or delete `log_entries`
