@@ -13,7 +13,13 @@ import {
   type TodaySnapshot,
 } from '../../src/features/today/api';
 import { TodayScreenView, type TodayNotice } from '../../src/features/today/components';
+import {
+  subscribeToCircleDoseEvents,
+  type RealtimeSupabaseClientLike,
+} from '../../src/features/today/realtime';
 import { onTodayReloadRequested } from '../../src/features/today/refresh';
+
+const EMPTY_CIRCLE_ID = '00000000-0000-4000-8000-000000000000';
 
 /** While offline or with check-offs waiting, try again this often. */
 export const TODAY_RETRY_INTERVAL_MS = 30_000;
@@ -96,6 +102,45 @@ export default function TodayScreen({ deps, referenceNow }: TodayRouteProps = {}
 
   // A medicine was added, edited or paused on the Meds screen: the doses may have changed.
   useEffect(() => onTodayReloadRequested(handleRetry), [handleRetry]);
+
+  const circleId = snapshot?.circle.id ?? null;
+  const snapshotUserId = snapshot?.userId;
+
+  // Live Realtime updates for the circle's dose_events (another carer checking off a dose, or
+  // mark-missed transitioning an overdue pending dose to missed).
+  useEffect(() => {
+    if (!hasBackend || mocks || deps?.isOffline || !circleId || circleId === EMPTY_CIRCLE_ID) {
+      return;
+    }
+    if (deps?.getClient) {
+      const candidate = deps.getClient() as unknown as Partial<RealtimeSupabaseClientLike>;
+      if (typeof candidate?.channel !== 'function') {
+        return;
+      }
+    }
+    return subscribeToCircleDoseEvents({
+      circleId,
+      ...(deps?.getClient
+        ? {
+            getClient: () => deps.getClient!() as unknown as RealtimeSupabaseClientLike,
+          }
+        : {}),
+      ...(deps?.storage ? { storage: deps.storage } : {}),
+      userId: snapshotUserId,
+      onDoseEventChange: (updatedDose) => {
+        setSnapshot((prev) => {
+          if (!prev || prev.circle.id !== circleId) return prev;
+          const exists = prev.doseEvents.some((d) => d.id === updatedDose.id);
+          return {
+            ...prev,
+            doseEvents: exists
+              ? prev.doseEvents.map((d) => (d.id === updatedDose.id ? updatedDose : d))
+              : [...prev.doseEvents, updatedDose],
+          };
+        });
+      },
+    });
+  }, [circleId, deps, hasBackend, mocks, snapshotUserId]);
 
   // "Sent when the network returns": the app has no network listener, so try again when the app
   // comes back to the foreground, and every 30 seconds while offline or while check-offs wait.
