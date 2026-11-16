@@ -1,5 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
+import { acceptInviteViaRpc, type AcceptInviteErrorCode } from '../../src/features/circle';
 import {
   createCircleViaRpc,
   type CreateCircleErrorCode,
@@ -11,7 +12,9 @@ export default function OnboardingStartRoute() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
-  const [errorCode, setErrorCode] = useState<CreateCircleErrorCode | null>(null);
+  const [errorCode, setErrorCode] = useState<CreateCircleErrorCode | AcceptInviteErrorCode | null>(
+    null,
+  );
 
   const handleCreateCircle = useCallback(
     async (values: CreateCircleFormValues): Promise<boolean> => {
@@ -39,6 +42,30 @@ export default function OnboardingStartRoute() {
     [router],
   );
 
+  const handleJoinCircle = useCallback(
+    async (tokenOrUrl: string): Promise<boolean> => {
+      setIsLoading(true);
+      setIsOffline(false);
+      setErrorCode(null);
+      try {
+        const result = await acceptInviteViaRpc({ tokenOrUrl });
+        if (result.ok) {
+          router.replace('/(tabs)/today' as never);
+          return true;
+        }
+        setIsOffline(result.isOffline);
+        setErrorCode(result.errorCode);
+        return false;
+      } catch {
+        setErrorCode('ACCEPT_INVITE_FAILED');
+        return false;
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [router],
+  );
+
   const handleRetry = useCallback(() => {
     setIsOffline(false);
     setErrorCode(null);
@@ -51,6 +78,7 @@ export default function OnboardingStartRoute() {
       hasError={errorCode !== null && !isOffline}
       errorCode={errorCode}
       onCreateCircle={handleCreateCircle}
+      onJoinCircle={handleJoinCircle}
       onRetry={handleRetry}
     />
   );

@@ -4,6 +4,7 @@ import { ErrorState } from '@carecircle/ui';
 import { StyleSheet, Text, View } from 'react-native';
 import en from '../i18n/en.json';
 import { getSupabaseClient } from '../src/features/auth/api';
+import { acceptInviteViaRpc, consumePendingInviteToken } from '../src/features/circle';
 import { loadCareCircleMocks } from '../src/features/mocks';
 
 export default function PlaceholderScreen() {
@@ -21,6 +22,16 @@ export default function PlaceholderScreen() {
     let cancelled = false;
     void (async () => {
       try {
+        const pendingToken = consumePendingInviteToken();
+        if (pendingToken) {
+          const joinRes = await acceptInviteViaRpc({ tokenOrUrl: pendingToken });
+          if (cancelled) return;
+          if (joinRes.ok) {
+            router.replace('/(tabs)/today' as never);
+            return;
+          }
+        }
+
         const supabase = getSupabaseClient();
         const { data, error } = await supabase.from('circles').select('id').limit(1);
         if (cancelled) return;

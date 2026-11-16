@@ -3,6 +3,7 @@ import { useCallback, useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import en from '../../../../i18n/en.json';
+import { parseInviteToken, type AcceptInviteErrorCode } from '../../circle/api';
 import {
   createCircleFormSchema,
   resolveDefaultTimezone,
@@ -18,8 +19,9 @@ export interface OnboardingStartScreenProps {
   isLoading?: boolean;
   isOffline?: boolean;
   hasError?: boolean;
-  errorCode?: CreateCircleErrorCode | null;
+  errorCode?: CreateCircleErrorCode | AcceptInviteErrorCode | null;
   onCreateCircle?: (values: CreateCircleFormValues) => void | Promise<boolean | void>;
+  onJoinCircle?: (tokenOrUrl: string) => void | Promise<boolean | void>;
   onRetry?: () => void;
 }
 
@@ -31,6 +33,7 @@ export function OnboardingStartScreen({
   hasError = false,
   errorCode = null,
   onCreateCircle,
+  onJoinCircle,
   onRetry,
 }: OnboardingStartScreenProps) {
   const { colors, radii, spacing, typography } = useTheme();
@@ -84,19 +87,55 @@ export function OnboardingStartScreen({
     }
   }, [busy, getValues, onCreateCircle]);
 
+  const handleSubmitJoin = useCallback(async () => {
+    if (busy || submittingRef.current) {
+      return;
+    }
+
+    const token = parseInviteToken(inviteLink);
+    if (!token) {
+      setValidationError(en.onboarding.joinInvalidMessage);
+      return;
+    }
+
+    setValidationError(null);
+    if (!onJoinCircle) {
+      return;
+    }
+
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      await onJoinCircle(inviteLink.trim());
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  }, [busy, inviteLink, onJoinCircle]);
+
   const handleRetry = useCallback(() => {
     setValidationError(null);
     if (onRetry) {
       onRetry();
+    } else if (mode === 'join') {
+      void handleSubmitJoin();
     } else {
       void handleSubmitCreate();
     }
-  }, [handleSubmitCreate, onRetry]);
+  }, [handleSubmitCreate, handleSubmitJoin, mode, onRetry]);
 
   const errorMessage =
     errorCode === 'CIRCLE_LIMIT_REACHED'
       ? en.onboarding.limitReachedMessage
-      : en.onboarding.errorMessage;
+      : errorCode === 'CIRCLE_FULL'
+        ? en.onboarding.joinCircleFullMessage
+        : errorCode === 'INVITE_EXPIRED'
+          ? en.onboarding.joinExpiredMessage
+          : errorCode === 'INVITE_USED'
+            ? en.onboarding.joinUsedMessage
+            : errorCode === 'INVITE_INVALID'
+              ? en.onboarding.joinInvalidMessage
+              : en.onboarding.errorMessage;
 
   return (
     <ScrollView
@@ -369,8 +408,12 @@ export function OnboardingStartScreen({
               placeholderTextColor={colors.textMuted}
               autoCapitalize="none"
               autoCorrect={false}
+              editable={!busy}
               value={inviteLink}
-              onChangeText={setInviteLink}
+              onChangeText={(next) => {
+                setInviteLink(next);
+                if (validationError) setValidationError(null);
+              }}
               style={[
                 styles.input,
                 {
@@ -384,6 +427,30 @@ export function OnboardingStartScreen({
                 },
               ]}
             />
+
+            {validationError ? (
+              <Text
+                testID="onboarding-validation-error"
+                style={{
+                  color: colors.danger,
+                  fontSize: typography.caption.fontSize,
+                  lineHeight: typography.caption.lineHeight,
+                }}
+              >
+                {validationError}
+              </Text>
+            ) : null}
+
+            <View testID="onboarding-join-button">
+              <Button
+                label={en.onboarding.submitJoin}
+                accessibilityLabel={en.onboarding.submitJoinA11y}
+                disabled={busy}
+                onPress={() => {
+                  void handleSubmitJoin();
+                }}
+              />
+            </View>
           </View>
         </Card>
       )}
