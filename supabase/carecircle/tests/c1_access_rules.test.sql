@@ -76,6 +76,8 @@ begin
 exception
   when insufficient_privilege then
     return -1;
+  when undefined_function then
+    return -2;
 end;
 $$;
 
@@ -368,9 +370,9 @@ select is(pg_temp.write_count($$update public.tasks set done_at = now(), done_by
 select is(pg_temp.write_count($$insert into public.visit_notes (circle_id, appointment_id, transcript, summary)
     values ('a0c00000-0000-4000-8000-000000000001', 'a0400000-0000-4000-8000-000000000001', 'Helper transcript', 'Helper note')$$),
   1, 'helper can add a visit note');
-select is(pg_temp.write_count($$update public.dose_events set status = 'given', acted_by = 'aa000002-0000-4000-8000-000000000002', acted_at = now()
-    where id = 'a0300000-0000-4000-8000-000000000001'$$),
-  1, 'helper can mark a dose given');
+-- CC-2b: doses are marked only through set_dose_status (direct UPDATE is revoked).
+select is(pg_temp.write_count($$select public.set_dose_status("doseEventId" := 'a0300000-0000-4000-8000-000000000001', status := 'given')$$),
+  1, 'helper can mark a dose given (through set_dose_status)');
 
 select ok(
   exists (select 1 from public.log_entries
