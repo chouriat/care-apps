@@ -20,11 +20,11 @@ This document specifies **Contract C2** for CareCircle's two AI tasks (`carecirc
 
 ```json
 {
-  "imagePath": "circles/<circle_id>/rx/<filename>.jpg"
+  "imagePath": "<circle_id>/<uuid>.jpg"
 }
 ```
 
-- `imagePath`: non-empty trimmed string (`z.string().trim().min(1)`), strict object (no unknown keys).
+- `imagePath`: non-empty trimmed string (`z.string().trim().min(1)`), strict object (no unknown keys). The AI gateway requires `imagePath` to match `<circle_id>/<uuid>.jpg` (lowercase UUIDs in the `prescription-photos` bucket) and refuses any other path shape with `INPUT_INVALID` before checking membership or reading Storage.
 
 ### Output (`extractPrescriptionOutputSchema` / `rxSchema`)
 

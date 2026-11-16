@@ -37,6 +37,10 @@ export type AiGatewayDeps = {
   verifyJwt?: (token: string) => Promise<{ userId: string } | null>;
   logCall?: (row: AiCallLogRow) => Promise<void>;
   countRecentCalls?: (userId: string, sinceIso: string) => Promise<number>;
+  checkPrescriptionCircleAccess?: (opts: { userId: string; circleId: string }) => Promise<boolean>;
+  readPrescriptionPhoto?: (opts: {
+    imagePath: string;
+  }) => Promise<{ bytes: Uint8Array; contentType: string } | null>;
   routeOverrides?: Partial<Record<AiTaskName, Partial<AiRouteConfig>>>;
   fetchImpl?: typeof fetch;
   getEnv?: (key: string) => string | undefined;
@@ -45,6 +49,22 @@ export type AiGatewayDeps = {
 
 const HOURLY_CALL_LIMIT = 60;
 const ONE_HOUR_MS = 3_600_000;
+const MAX_PRESCRIPTION_PHOTO_BYTES = 2 * 1024 * 1024;
+const RX_IMAGE_PATH_REGEX =
+  /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jpg$/;
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const chunkSize = 8192;
+  const chunks: string[] = [];
+  for (let i = 0; i < bytes.byteLength; i += chunkSize) {
+    chunks.push(String.fromCharCode(...bytes.subarray(i, i + chunkSize)));
+  }
+  return btoa(chunks.join(''));
+}
+
+function isJpegBytes(bytes: Uint8Array): boolean {
+  return bytes.byteLength >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+}
 
 const requestEnvelopeSchema = z.object({
   task: z.enum(['carecircle.extractPrescription', 'carecircle.summarizeVisit']),
@@ -99,6 +119,24 @@ function createAnthropicProvider(
       const apiKey = getEnv('ANTHROPIC_API_KEY');
       if (!apiKey) throw new Error('Missing ANTHROPIC_API_KEY');
       const compiledPrompt = PROMPTS[req.task];
+      const userDataText = formatUserDataMessage(req.input);
+      const userContent =
+        req.image && typeof req.input.text !== 'string'
+          ? [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: req.image.mimeType,
+                  data: bytesToBase64(req.image.bytes),
+                },
+              },
+              {
+                type: 'text',
+                text: userDataText,
+              },
+            ]
+          : userDataText;
       const res = await fetchImpl('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -114,7 +152,7 @@ function createAnthropicProvider(
           messages: [
             {
               role: 'user',
-              content: formatUserDataMessage(req.input),
+              content: userContent,
             },
           ],
           output_config: {
@@ -155,6 +193,19 @@ function createGeminiProvider(
       const compiledPrompt = PROMPTS[req.task];
       const modelId = stripModelPrefix(req.model);
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`;
+      const userParts: Array<Record<string, unknown>> = [
+        {
+          text: formatUserDataMessage(req.input),
+        },
+      ];
+      if (req.image) {
+        userParts.push({
+          inlineData: {
+            mimeType: req.image.mimeType,
+            data: bytesToBase64(req.image.bytes),
+          },
+        });
+      }
       const res = await fetchImpl(url, {
         method: 'POST',
         headers: {
@@ -168,11 +219,7 @@ function createGeminiProvider(
           contents: [
             {
               role: 'user',
-              parts: [
-                {
-                  text: formatUserDataMessage(req.input),
-                },
-              ],
+              parts: userParts,
             },
           ],
           generationConfig: {
@@ -260,6 +307,59 @@ async function defaultLogCall(row: AiCallLogRow): Promise<void> {
   if (!res.ok) throw new Error(`ai_calls insert failed: ${res.status}`);
 }
 
+function createDefaultCheckPrescriptionCircleAccess(
+  fetchImpl: typeof fetch,
+  getEnv: (key: string) => string | undefined,
+) {
+  return async ({ userId, circleId }: { userId: string; circleId: string }): Promise<boolean> => {
+    const url = getEnv('SUPABASE_URL');
+    const apikey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+    if (!url || !apikey) throw new Error('circle_members check not configured');
+    const query = `circle_id=eq.${encodeURIComponent(circleId)}&user_id=eq.${encodeURIComponent(userId)}&role=in.(owner,helper)&select=role`;
+    const res = await fetchImpl(`${url}/rest/v1/circle_members?${query}`, {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${apikey}`,
+        apikey,
+      },
+    });
+    if (!res.ok) throw new Error(`circle_members check failed: ${res.status}`);
+    const rows = (await res.json()) as Array<{ role?: unknown }>;
+    return Array.isArray(rows) && rows.some((row) => row.role === 'owner' || row.role === 'helper');
+  };
+}
+
+function createDefaultReadPrescriptionPhoto(
+  fetchImpl: typeof fetch,
+  getEnv: (key: string) => string | undefined,
+) {
+  return async ({
+    imagePath,
+  }: {
+    imagePath: string;
+  }): Promise<{ bytes: Uint8Array; contentType: string } | null> => {
+    const url = getEnv('SUPABASE_URL');
+    const apikey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+    if (!url || !apikey) throw new Error('prescription-photos storage not configured');
+    const res = await fetchImpl(`${url}/storage/v1/object/prescription-photos/${imagePath}`, {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${apikey}`,
+        apikey,
+      },
+    });
+    if (res.status === 404 || res.status === 400) {
+      return null;
+    }
+    if (!res.ok) {
+      throw new Error(`prescription-photos read failed: ${res.status}`);
+    }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const contentType = res.headers.get('content-type') ?? '';
+    return { bytes, contentType };
+  };
+}
+
 export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
   const {
     verifyJwt = defaultVerifyJwt,
@@ -270,6 +370,11 @@ export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
   } = deps;
   const countRecentCalls =
     deps.countRecentCalls ?? createDefaultCountRecentCalls(fetchImpl, getEnv);
+  const checkPrescriptionCircleAccess =
+    deps.checkPrescriptionCircleAccess ??
+    createDefaultCheckPrescriptionCircleAccess(fetchImpl, getEnv);
+  const readPrescriptionPhoto =
+    deps.readPrescriptionPhoto ?? createDefaultReadPrescriptionPhoto(fetchImpl, getEnv);
 
   const providerMap: Record<AiProviderName, AiProvider> = {
     fake: deps.providers?.fake ?? fakeProvider,
@@ -306,6 +411,45 @@ export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
       return fail('QUOTA_EXCEEDED', 'Hourly AI request limit exceeded.', false, 429);
     }
 
+    let providerImage: { bytes: Uint8Array; mimeType: 'image/jpeg' } | undefined;
+    if (task === 'carecircle.extractPrescription') {
+      const rawImagePath = input.imagePath;
+      const pathMatch =
+        typeof rawImagePath === 'string' ? RX_IMAGE_PATH_REGEX.exec(rawImagePath) : null;
+      if (!pathMatch) {
+        return fail('INPUT_INVALID', 'Invalid prescription photo path.', false, 400);
+      }
+      const circleId = pathMatch[1]!;
+      const imagePath = rawImagePath as string;
+
+      let hasAccess = false;
+      try {
+        hasAccess = await checkPrescriptionCircleAccess({ userId: authUser.userId, circleId });
+      } catch {
+        return fail('PROVIDER_ERROR', 'Circle access check unavailable.', true, 503);
+      }
+      if (!hasAccess) {
+        return fail('INPUT_INVALID', 'Not authorized to read this prescription photo.', false, 403);
+      }
+
+      let photo: { bytes: Uint8Array; contentType: string } | null = null;
+      try {
+        photo = await readPrescriptionPhoto({ imagePath });
+      } catch {
+        return fail('PROVIDER_ERROR', 'Prescription photo storage unavailable.', true, 503);
+      }
+      if (
+        !photo ||
+        !/^image\/jpeg(?:\s*;.*)?$/i.test(photo.contentType.trim()) ||
+        photo.bytes.byteLength === 0 ||
+        photo.bytes.byteLength > MAX_PRESCRIPTION_PHOTO_BYTES ||
+        !isJpegBytes(photo.bytes)
+      ) {
+        return fail('INPUT_INVALID', 'Invalid or missing prescription photo.', false, 400);
+      }
+      providerImage = { bytes: photo.bytes, mimeType: 'image/jpeg' };
+    }
+
     const provider = providerMap[route.provider];
     const { model, promptVersion: prompt_version, schema } = route;
     const startedAt = now();
@@ -339,6 +483,7 @@ export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
         const res = await provider.generate({
           ...route,
           input,
+          ...(providerImage ? { image: providerImage } : {}),
           attempt,
           signal: controller.signal,
         });

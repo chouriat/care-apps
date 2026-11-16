@@ -31,7 +31,7 @@ One Edge Function at `POST /functions/v1/ai`. The app never calls a model direct
 | --- | --- | --- |
 | `UNAUTHENTICATED` | No or expired JWT | Send to sign-in |
 | `QUOTA_EXCEEDED` | Free-tier limit hit | Show paywall |
-| `INPUT_INVALID` | Image over 8 MB, unreadable, or wrong type | Ask user to retake |
+| `INPUT_INVALID` | Photo missing, unreadable, not yours to read, not a JPEG, or over 2 MB | Ask user to retake |
 | `SCHEMA_INVALID` | Model output failed validation twice | Show "couldn't read that, add it manually" |
 | `PROVIDER_ERROR` | Model API down or timed out (25 s cap) | Retry button; `retryable: true` |
 
