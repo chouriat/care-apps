@@ -1,4 +1,5 @@
 import type { MemberRole } from '@carecircle/core';
+import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   addMedication,
@@ -12,6 +13,7 @@ import {
   MedsScreenView,
   type ValidatedMedicationFormPayload,
 } from '../../src/features/meds/components';
+import { onMedsReloadRequested } from '../../src/features/meds/refresh';
 
 export interface MedsRouteProps {
   deps?: MedsDeps;
@@ -19,9 +21,7 @@ export interface MedsRouteProps {
 }
 
 function defaultOpenScanScreen(): void {
-  void import('expo-router').then(({ router }) => {
-    router.push('/meds/scan' as never);
-  });
+  router.push('/meds/scan' as never);
 }
 
 export default function MedsScreen({ deps, onScanPrescription }: MedsRouteProps = {}) {
@@ -73,6 +73,9 @@ export default function MedsScreen({ deps, onScanPrescription }: MedsRouteProps 
       setHasError(!res.isOffline);
     }
   }, [deps]);
+
+  // A medicine saved on the scan screen: the Meds tab stayed mounted under it, so reload.
+  useEffect(() => onMedsReloadRequested(() => void refreshList()), [refreshList]);
 
   const handleSaveMedication = useCallback(
     async (

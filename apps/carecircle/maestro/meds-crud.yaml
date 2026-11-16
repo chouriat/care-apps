@@ -35,11 +35,15 @@ env:
     id: 'onboarding-submit-button'
 - assertVisible:
     id: 'today-empty-state'
-- tapOn: 'Medications'
+- tapOn:
+    id: 'tab-meds'
 - assertVisible:
     id: 'meds-screen'
 - assertVisible:
     id: 'meds-empty-state'
+# The owner sees both ways to add a medicine (CC-3b follow-up item 4).
+- assertVisible:
+    id: 'meds-scan-button'
 # Add medication
 - tapOn:
     id: 'meds-add-button'
