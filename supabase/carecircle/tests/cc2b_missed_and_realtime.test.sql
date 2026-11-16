@@ -9,7 +9,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(34);
+select plan(39);
 
 do $$
 declare
@@ -66,6 +66,25 @@ exception
     return true;
   when others then
     return true;
+end;
+$$;
+
+-- Calls set_dose_status as the current role and returns 'status/acted_by/acted_at is now', or the
+-- error. Never raises, so one failing check (or a missing function on main) cannot abort the file.
+create or replace function pg_temp.set_status(p_dose uuid, p_status public.dose_status)
+returns text
+language plpgsql
+as $$
+declare
+  r record;
+begin
+  execute 'select * from public.set_dose_status("doseEventId" := $1, status := $2)'
+    into r using p_dose, p_status;
+  return r.status::text || '/' || coalesce(r.acted_by::text, 'null') || '/'
+    || coalesce((r.acted_at between now() - interval '1 minute' and now() + interval '1 minute')::text, 'null');
+exception
+  when others then
+    return 'ERROR ' || sqlstate || ': ' || sqlerrm;
 end;
 $$;
 
@@ -248,8 +267,7 @@ select is(
 -- 16-20. Owner and helper record pending doses as given and skipped
 select pg_temp.as_user('c2b00001-0000-4000-8000-000000000001'::uuid);
 select is(
-  (select r.status::text || '/' || r.acted_by::text || '/' || (r.acted_at between now() - interval '1 minute' and now() + interval '1 minute')::text
-     from public.set_dose_status("doseEventId" := 'c2bd0001-0000-4000-8000-000000000001'::uuid, status := 'given'::public.dose_status) as r),
+  pg_temp.set_status('c2bd0001-0000-4000-8000-000000000001'::uuid, 'given'),
   'given/c2b00001-0000-4000-8000-000000000001/true',
   'owner sets a pending dose to given with acted_by = auth.uid() and acted_at = now()'
 );
@@ -266,8 +284,7 @@ select is(
 
 select pg_temp.as_user('c2b00002-0000-4000-8000-000000000002'::uuid);
 select is(
-  (select r.status::text || '/' || r.acted_by::text || '/' || (r.acted_at between now() - interval '1 minute' and now() + interval '1 minute')::text
-     from public.set_dose_status("doseEventId" := 'c2bd0002-0000-4000-8000-000000000002'::uuid, status := 'skipped'::public.dose_status) as r),
+  pg_temp.set_status('c2bd0002-0000-4000-8000-000000000002'::uuid, 'skipped'),
   'skipped/c2b00002-0000-4000-8000-000000000002/true',
   'helper sets a pending dose to skipped with acted_by = auth.uid() and acted_at = now()'
 );
@@ -314,6 +331,30 @@ select is(
   'DOSE_ALREADY_RECORDED refusals leave status, acted_by, and dose log count unchanged'
 );
 
+-- A viewer, an owner of another circle and a non-member get the same 42501 refusal on a dose
+-- that is already recorded: DOSE_ALREADY_RECORDED is checked only after access, so it never tells
+-- an outsider anything about another family's doses.
+select pg_temp.as_user('c2b00003-0000-4000-8000-000000000003'::uuid);
+select matches(
+  pg_temp.set_status('c2bd0001-0000-4000-8000-000000000001'::uuid, 'skipped'),
+  '^ERROR 42501',
+  'a viewer is refused with 42501 (not DOSE_ALREADY_RECORDED) on an already recorded dose'
+);
+
+select pg_temp.as_user('c2b00004-0000-4000-8000-000000000004'::uuid);
+select matches(
+  pg_temp.set_status('c2bd0001-0000-4000-8000-000000000001'::uuid, 'skipped'),
+  '^ERROR 42501',
+  'an owner of another circle is refused with 42501 (not DOSE_ALREADY_RECORDED) on an already recorded dose'
+);
+
+select pg_temp.as_user('c2b00005-0000-4000-8000-000000000005'::uuid);
+select matches(
+  pg_temp.set_status('c2bd0001-0000-4000-8000-000000000001'::uuid, 'skipped'),
+  '^ERROR 42501',
+  'a non-member is refused with 42501 (not DOSE_ALREADY_RECORDED) on an already recorded dose'
+);
+
 -- 24-27. mark-missed (service_role) can set pending -> missed, and a missed dose can still be recorded late as given or skipped
 set local role service_role;
 update public.dose_events
@@ -332,17 +373,15 @@ select is(
 
 select pg_temp.as_user('c2b00002-0000-4000-8000-000000000002'::uuid);
 select is(
-  (select r.status::text || '/' || r.acted_by::text
-     from public.set_dose_status("doseEventId" := 'c2bd0003-0000-4000-8000-000000000003'::uuid, status := 'given'::public.dose_status) as r),
-  'given/c2b00002-0000-4000-8000-000000000002',
+  pg_temp.set_status('c2bd0003-0000-4000-8000-000000000003'::uuid, 'given'),
+  'given/c2b00002-0000-4000-8000-000000000002/true',
   'a dose that is already missed can still be set to given (late record)'
 );
 
 select pg_temp.as_user('c2b00001-0000-4000-8000-000000000001'::uuid);
 select is(
-  (select r.status::text || '/' || r.acted_by::text
-     from public.set_dose_status("doseEventId" := 'c2bd0004-0000-4000-8000-000000000004'::uuid, status := 'skipped'::public.dose_status) as r),
-  'skipped/c2b00001-0000-4000-8000-000000000001',
+  pg_temp.set_status('c2bd0004-0000-4000-8000-000000000004'::uuid, 'skipped'),
+  'skipped/c2b00001-0000-4000-8000-000000000001/true',
   'a dose that is already missed can still be set to skipped (late record)'
 );
 
@@ -386,6 +425,22 @@ select is(
   'dose c2bd0005 remains pending after blocked direct UPDATE attempts'
 );
 
+-- Revoking direct UPDATE must not take away reading: every member of Circle A still reads its 5 doses.
+select pg_temp.as_user('c2b00001-0000-4000-8000-000000000001'::uuid);
+select is(
+  (select count(*)::int from public.dose_events where circle_id = 'c2bc0001-0000-4000-8000-000000000001'::uuid),
+  5,
+  'the owner still reads all 5 of the circle''s doses after direct UPDATE is revoked'
+);
+
+select pg_temp.as_user('c2b00003-0000-4000-8000-000000000003'::uuid);
+select is(
+  (select count(*)::int from public.dose_events where circle_id = 'c2bc0001-0000-4000-8000-000000000001'::uuid),
+  5,
+  'the viewer still reads all 5 of the circle''s doses'
+);
+
+select pg_temp.as_postgres();
 -- 31-33. pg_cron schedule for carecircle-mark-missed (*/5 * * * *) reading project_url and cron_secret from Vault
 select is(
   (select schedule || '/' || active::text from cron.job where jobname = 'carecircle-mark-missed'),
@@ -400,6 +455,7 @@ select ok(
 
 select ok(
   (select command ~* 'vault\.decrypted_secrets' and command ~* 'project_url' and command ~* 'cron_secret'
+          and command ~* 'Bearer'
      from cron.job where jobname = 'carecircle-mark-missed'),
   'carecircle-mark-missed cron command reads project_url and cron_secret from vault.decrypted_secrets'
 );
