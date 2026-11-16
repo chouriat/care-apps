@@ -11,6 +11,7 @@
     "db:stop": "node supabase/carecircle/cli.mjs stop",
     "test:db": "node supabase/carecircle/cli.mjs test db",
     "eval:carecircle": "node scripts/eval-carecircle.mjs",
+    "eval:visit": "node scripts/eval-visit.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

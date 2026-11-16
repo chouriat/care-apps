@@ -66,6 +66,24 @@ const isoDateSchema = z
   .string()
   .regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, 'Date must be in YYYY-MM-DD format');
 
+export const knownMedInputSchema = z
+  .object({
+    id: z.string().uuid(),
+    name: z.string().trim().min(1),
+    strength: z.string().trim().min(1).nullable(),
+  })
+  .strict();
+
+export const visitInputSchema = z
+  .object({
+    circleId: z.string().uuid().optional(),
+    audioPath: z.string().trim().min(1).optional(),
+    text: z.string().trim().min(1).optional(),
+    knownMeds: z.array(knownMedInputSchema),
+  })
+  .strict()
+  .refine((val) => Boolean(val.audioPath || val.text), 'Either audioPath or text must be provided');
+
 const followUpItemSchema = z
   .object({
     title: z.string().trim().min(1),
@@ -107,6 +125,12 @@ export const visitSchema = z
     followUps: z.array(followUpItemSchema),
     medChanges: z.array(medChangeItemSchema),
     questionsToAsk: z.array(z.string().trim().min(1)),
+  })
+  .strict();
+
+export const visitAudioTranscriptionSchema = z
+  .object({
+    transcript: z.string().trim().min(1),
   })
   .strict();
 
@@ -198,6 +222,28 @@ export const visitJsonSchema: Record<string, unknown> = {
   },
 };
 
+export const visitAudioTranscriptionJsonSchema: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['transcript'],
+  properties: {
+    transcript: { type: 'string' },
+  },
+};
+
+export type AiSpeechToTextConfig = {
+  provider: AiProviderName;
+  model: string;
+  systemPrompt: string;
+  promptVersion: string;
+  schema: z.ZodType<{ transcript: string }>;
+  jsonSchema: Record<string, unknown>;
+  timeoutMs: number;
+  inputMicrocentsPer1k: number;
+  outputMicrocentsPer1k: number;
+  costCurrency: string;
+};
+
 export type AiRouteConfig = {
   task: AiTaskName;
   provider: AiProviderName;
@@ -210,6 +256,7 @@ export type AiRouteConfig = {
   inputMicrocentsPer1k: number;
   outputMicrocentsPer1k: number;
   costCurrency: string;
+  speechToText?: AiSpeechToTextConfig;
 };
 
 const rxTask = 'carecircle.extractPrescription' as const;
@@ -222,6 +269,14 @@ const visitTask = 'carecircle.summarizeVisit' as const;
 // - claude-sonnet-5-5: $2 in / $10 out, https://platform.claude.com/docs/en/about-claude/pricing
 // Re-check when a model changes. gemini-2.5-flash is closed to new API users and
 // claude-sonnet-4-20250514 was retired on 2026-06-15, so neither is used.
+//
+// CC-5a speech-to-text step on `carecircle.summarizeVisit` (checked 2026-11-16):
+// - Model: `gemini/gemini-3.5-flash-lite` via `inlineData` (`audio/mp4`, `audio/m4a`).
+// - Audio docs & inline size limit (up to 100 MB payload; bucket limit is 10 MB):
+//   https://ai.google.dev/gemini-api/docs/audio
+// - Audio input pricing for Gemini 3.5 Flash-Lite ($0.50 / 1M audio input tokens = 50_000
+//   microcents / 1k; $2.50 / 1M output tokens = 250_000 microcents / 1k):
+//   https://ai.google.dev/gemini-api/docs/pricing
 export const routes: Record<AiTaskName, AiRouteConfig> = {
   [rxTask]: {
     task: rxTask,
@@ -248,6 +303,19 @@ export const routes: Record<AiTaskName, AiRouteConfig> = {
     inputMicrocentsPer1k: 200_000,
     outputMicrocentsPer1k: 1_000_000,
     costCurrency: 'USD',
+    speechToText: {
+      provider: 'gemini',
+      model: 'gemini/gemini-3.5-flash-lite',
+      systemPrompt:
+        'You are the CareCircle clinical visit audio transcription assistant. Transcribe the spoken audio in the attachment verbatim into plain text inside the JSON field "transcript". Never add medical advice, commentary, or summaries.',
+      promptVersion: 'v1',
+      schema: visitAudioTranscriptionSchema,
+      jsonSchema: visitAudioTranscriptionJsonSchema,
+      timeoutMs: 25_000,
+      inputMicrocentsPer1k: 50_000,
+      outputMicrocentsPer1k: 250_000,
+      costCurrency: 'USD',
+    },
   },
 };
 
@@ -268,6 +336,11 @@ export type AiProviderRequest = AiRouteConfig & {
     bytes: Uint8Array;
     mimeType: 'image/jpeg';
   };
+  audio?: {
+    bytes: Uint8Array;
+    mimeType: 'audio/mp4' | 'audio/m4a';
+  };
+  systemPromptOverride?: string;
   signal?: AbortSignal;
 };
 
@@ -306,6 +379,12 @@ export const FAKE_FIXTURES: Record<AiTaskName, unknown> = {
   },
 };
 
+export const FAKE_VISIT_TRANSCRIPT =
+  'Doctor said blood pressure is stable. Book a blood test in two weeks and stop Aspirin.';
+
 export const fakeProvider: AiProvider = {
-  generate: async (req) => ({ output: FAKE_FIXTURES[req.task], inputTokens: 64, outputTokens: 48 }),
+  generate: async (req) =>
+    req.audio
+      ? { output: { transcript: FAKE_VISIT_TRANSCRIPT }, inputTokens: 32, outputTokens: 24 }
+      : { output: FAKE_FIXTURES[req.task], inputTokens: 64, outputTokens: 48 },
 };
