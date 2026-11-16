@@ -1,0 +1,101 @@
+# CC-1b [safety 1/2]: Two-user invite flow (owner creates circle and invite link; second user
+# signs in on clean device state, accepts the invite link, and appears in the circle member list).
+# Needs the same local stack as sign-in-magic-link.yaml. The code PR must also run this flow in
+# CI (apps/carecircle/maestro/ci-run.sh runs only the sign-in flow today).
+# The member list shows each member's role label (Owner, Helper, Viewer) next to the name.
+appId: app.carecircle.mobile
+env:
+  OWNER_EMAIL: owner-invite@example.com
+  HELPER_EMAIL: helper-invite@example.com
+  MAILPIT_URL: http://127.0.0.1:54324
+---
+# Step 1: Owner signs in, creates Circle "Family Care", opens /circle, and generates a helper invite link
+- runScript: scripts/clear-mailpit.js
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: 'sign-in-screen'
+- tapOn:
+    id: 'sign-in-email-input'
+- inputText: ${OWNER_EMAIL}
+- hideKeyboard
+- tapOn: '(?i).*magic link.*'
+- assertVisible:
+    id: 'sign-in-magic-link-sent'
+- retry:
+    maxRetries: 5
+    commands:
+      - runScript: scripts/magic-link-from-mailpit.js
+- openLink: ${output.callbackUrl}
+- assertVisible:
+    id: 'onboarding-start-screen'
+- tapOn:
+    id: 'onboarding-circle-name-input'
+- inputText: 'Family Care'
+- hideKeyboard
+- tapOn:
+    id: 'onboarding-recipient-name-input'
+- inputText: 'Evelyn'
+- hideKeyboard
+- tapOn:
+    id: 'onboarding-submit-button'
+- assertVisible:
+    id: 'today-empty-state'
+- openLink: 'carecircle://circle'
+- assertVisible:
+    id: 'circle-settings-screen'
+- tapOn:
+    id: 'circle-create-invite-button'
+- assertVisible:
+    id: 'circle-invite-link-value'
+- copyTextFrom:
+    id: 'circle-invite-link-value'
+
+# Step 2: Second user (helper) signs in on a fresh device state, joins by invite link, and appears in /circle
+- runScript: scripts/clear-mailpit.js
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: 'sign-in-screen'
+- tapOn:
+    id: 'sign-in-email-input'
+- inputText: ${HELPER_EMAIL}
+- hideKeyboard
+- tapOn: '(?i).*magic link.*'
+- assertVisible:
+    id: 'sign-in-magic-link-sent'
+- retry:
+    maxRetries: 5
+    commands:
+      - runScript: scripts/magic-link-from-mailpit.js
+- openLink: ${output.callbackUrl}
+- assertVisible:
+    id: 'onboarding-start-screen'
+- tapOn:
+    id: 'onboarding-choice-join'
+- tapOn:
+    id: 'onboarding-join-input'
+- pasteText
+- hideKeyboard
+- tapOn:
+    id: 'onboarding-join-button'
+- assertVisible:
+    id: 'today-empty-state'
+- openLink: 'carecircle://circle'
+- assertVisible:
+    id: 'circle-settings-screen'
+- assertVisible:
+    id: 'circle-member-list'
+- assertVisible:
+    text: 'Owner'
+    childOf:
+      id: 'circle-member-list'
+- assertVisible:
+    text: 'Helper'
+    childOf:
+      id: 'circle-member-list'
+# A helper sees no invite controls and no invite link
+- assertNotVisible:
+    id: 'circle-create-invite-button'
+- assertNotVisible:
+    id: 'circle-invite-link-value'
