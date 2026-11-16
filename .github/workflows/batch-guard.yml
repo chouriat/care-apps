@@ -1,0 +1,40 @@
+name: batch-guard
+# Runs on pull requests into a batch/** branch (work merged before Claude's combined review).
+# Fails if the PR edits, renames or deletes an existing test file, a merged migration,
+# or this file. New test files and new migrations are allowed.
+on:
+  pull_request:
+    branches: ['batch/**']
+
+permissions:
+  contents: read
+
+jobs:
+  protected-files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Refuse edits to existing tests, merged migrations and this guard
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          base="origin/${BASE_REF}"
+          protected='(\.test\.tsx?$|_test\.ts$|^supabase/carecircle/tests/|^supabase/carecircle/migrations/|^\.github/workflows/batch-guard\.yml$)'
+          # Files Gemini is allowed to edit during the batch (the tab count check grows with CC-6a and CC-6b).
+          allowed='^apps/carecircle/src/meds-tabs-review\.test\.tsx$'
+          changed=$(git diff --name-status --diff-filter=MDRT "$base"...HEAD | awk -F'\t' '{print $2}')
+          bad=$(printf '%s\n' "$changed" | grep -E "$protected" | grep -Ev "$allowed" || true)
+          {
+            echo "### Test and migration files touched by this PR"
+            git diff --name-status "$base"...HEAD | grep -E "$protected" || echo "none"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$bad" ]; then
+            echo "::error::This PR changes or deletes files that must stay as they are during the batch:"
+            printf '%s\n' "$bad"
+            echo "Add a new test file or a new migration instead. If an existing test is wrong, stop and say so in the PR; Claude decides in the combined review."
+            exit 1
+          fi
+          echo "No existing test, merged migration or guard file was changed."
