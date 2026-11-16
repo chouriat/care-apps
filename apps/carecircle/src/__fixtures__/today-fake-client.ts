@@ -7,12 +7,19 @@ type Row = Record<string, unknown>;
 
 export interface FakeQueryCall {
   table: string;
+  op?: 'select' | 'insert' | 'update';
+  values?: Record<string, unknown>;
   filters: Array<[op: 'eq' | 'gte' | 'lte', column: string, value: unknown]>;
 }
 
 export interface FakeTodayClientOptions {
   tables: Record<string, Row[]>;
   isOnline?: () => boolean;
+  writeError?: (
+    table: string,
+    op: 'insert' | 'update',
+    values: Record<string, unknown>,
+  ) => { message: string; code?: string } | null;
   rpc?: (
     fn: string,
     args: Record<string, unknown>,
@@ -23,17 +30,65 @@ export function createFakeTodayClient(options: FakeTodayClientOptions) {
   const queries: FakeQueryCall[] = [];
   const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
   const isOnline = options.isOnline ?? (() => true);
+  let nextSeq = 1;
 
   function from(table: string) {
     const call: FakeQueryCall = { table, filters: [] };
     let orderBy: { column: string; ascending: boolean } | null = null;
     let limitN: number | null = null;
+    let pendingOp: 'select' | 'insert' | 'update' = 'select';
+    let pendingValues: Record<string, unknown> | null = null;
 
     const run = () => {
       queries.push(call);
       if (!isOnline()) {
         return { data: null, error: { message: 'TypeError: Network request failed' } };
       }
+
+      if (pendingOp === 'insert' && pendingValues) {
+        const err = options.writeError?.(table, 'insert', pendingValues) ?? null;
+        if (err) {
+          return { data: null, error: err };
+        }
+        const id =
+          typeof pendingValues.id === 'string'
+            ? pendingValues.id
+            : `c1200099-0000-4000-8000-${String(nextSeq++).padStart(12, '0')}`;
+        const created: Row = {
+          id,
+          strength: null,
+          instructions: null,
+          start_date: '2026-11-15',
+          end_date: null,
+          active: true,
+          ...pendingValues,
+        };
+        const tableRows = options.tables[table] ?? [];
+        tableRows.push(created);
+        options.tables[table] = tableRows;
+        return { data: [created], error: null };
+      }
+
+      if (pendingOp === 'update' && pendingValues) {
+        const err = options.writeError?.(table, 'update', pendingValues) ?? null;
+        if (err) {
+          return { data: null, error: err };
+        }
+        const tableRows = options.tables[table] ?? [];
+        const updatedRows: Row[] = [];
+        options.tables[table] = tableRows.map((row) => {
+          const matches = call.filters.every(([op, column, value]) => {
+            if (op === 'eq') return row[column] === value;
+            return true;
+          });
+          if (!matches) return row;
+          const updated = { ...row, ...pendingValues };
+          updatedRows.push(updated);
+          return updated;
+        });
+        return { data: updatedRows, error: null };
+      }
+
       let rows = [...(options.tables[table] ?? [])];
       for (const [op, column, value] of call.filters) {
         rows = rows.filter((row) => {
@@ -57,6 +112,20 @@ export function createFakeTodayClient(options: FakeTodayClientOptions) {
 
     const builder = {
       select: () => builder,
+      insert: (values: Record<string, unknown>) => {
+        pendingOp = 'insert';
+        pendingValues = values;
+        call.op = 'insert';
+        call.values = values;
+        return builder;
+      },
+      update: (values: Record<string, unknown>) => {
+        pendingOp = 'update';
+        pendingValues = values;
+        call.op = 'update';
+        call.values = values;
+        return builder;
+      },
       eq: (column: string, value: unknown) => {
         call.filters.push(['eq', column, value]);
         return builder;
