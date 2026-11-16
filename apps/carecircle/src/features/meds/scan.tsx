@@ -28,7 +28,7 @@ import {
   useTheme,
 } from '@carecircle/ui';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import en from '../../../i18n/en.json';
 import { getSupabaseClient, resolveSupabaseConfig } from '../auth/api';
@@ -36,6 +36,10 @@ import { loadCareCircleMocks } from '../mocks';
 import { getAppObservability } from '../observability/api';
 import { PaywallSheet } from '../paywall/components';
 import { loadTodaySnapshot, type TodayDeps } from '../today/api';
+import {
+  PrescriptionPhotoPermissionError,
+  createExpoPrescriptionPhotoPicker,
+} from './photo-picker';
 import {
   MAX_PRESCRIPTION_PHOTO_BYTES,
   createPrescriptionPhotoId,
@@ -132,8 +136,20 @@ export type ScanPrescriptionResult =
   | {
       ok: false;
       imagePath: string | null;
-      errorCode: AiErrorCode | 'UPLOAD_FAILED' | 'FORBIDDEN_ROLE';
+      errorCode: ScanErrorCode;
     };
+
+/**
+ * `PHOTO_INVALID`: the photo could not be turned into a JPEG of at most 1600 px and 2 MB (retake).
+ * `UPLOAD_FAILED`: the upload itself failed, usually no network (try again with the same photo).
+ * `PHOTO_PERMISSION_DENIED`: camera or library access refused.
+ */
+export type ScanErrorCode =
+  | AiErrorCode
+  | 'PHOTO_INVALID'
+  | 'UPLOAD_FAILED'
+  | 'FORBIDDEN_ROLE'
+  | 'PHOTO_PERMISSION_DENIED';
 
 export async function scanPrescriptionPhoto(
   input: {
@@ -156,11 +172,16 @@ export async function scanPrescriptionPhoto(
   let imagePath = input.existingImagePath ?? null;
 
   if (!imagePath) {
+    let prepared: Awaited<ReturnType<typeof preparePrescriptionPhotoForUpload>>;
     try {
-      const prepared = await preparePrescriptionPhotoForUpload(
+      prepared = await preparePrescriptionPhotoForUpload(
         input.photo,
         deps.photoPicker?.resizeAndConvertToJpeg,
       );
+    } catch {
+      return { ok: false, imagePath: null, errorCode: 'PHOTO_INVALID' };
+    }
+    try {
       const uploaded = await uploadPrescriptionPhoto({
         supabase,
         circleId: input.circleId,
@@ -280,6 +301,7 @@ export async function confirmAndSaveScannedMedication(
     deps.supabase ??
     (getSupabaseClient() as unknown as RxStorageSupabaseLike & Pick<SupabaseClient, 'from'>);
   const trackMedAdded = deps.trackMedAddedFromPhoto ?? defaultTrackMedAddedFromPhoto;
+  let savedMedication: Medication;
 
   try {
     const res = await supabase
@@ -306,23 +328,36 @@ export async function confirmAndSaveScannedMedication(
     }
 
     const medication = medicationFromRow(medicationRowSchema.parse(rows[0]));
-    trackMedAdded();
-    await loadTodaySnapshot(deps);
-
-    // Best-effort cleanup of the prescription photo after save; never block save if delete fails.
-    try {
-      await deletePrescriptionPhoto({
-        supabase,
-        imagePath: input.imagePath,
-      });
-    } catch {
-      // Leftover photos are cleaned up after 24 hours by cleanup-prescription-photos.
-    }
-
-    return { ok: true, medication };
+    savedMedication = medication;
   } catch {
     return { ok: false, errorCode: 'SAVE_FAILED' };
   }
+
+  // The medicine is saved from here on. Nothing below may turn this into "Not saved": the person
+  // would tap Save again and the circle would get the medicine (and every dose) twice.
+  try {
+    trackMedAdded();
+  } catch {
+    // Analytics never decides whether a medicine is saved.
+  }
+
+  // Best-effort cleanup of the prescription photo after save; never block save if delete fails.
+  try {
+    await deletePrescriptionPhoto({
+      supabase,
+      imagePath: input.imagePath,
+    });
+  } catch {
+    // Leftover photos are removed within a day by cleanup-prescription-photos.
+  }
+
+  try {
+    await loadTodaySnapshot(deps);
+  } catch {
+    // Today reloads itself when it opens.
+  }
+
+  return { ok: true, medication: savedMedication };
 }
 
 export async function discardScannedMedication(
@@ -339,16 +374,16 @@ export async function discardScannedMedication(
       imagePath: input.imagePath,
     });
   } catch {
-    // Ignore delete failure on discard; hourly cleanup job removes leftover objects.
+    // Ignore delete failure on discard; the daily clean-up job removes leftover photos.
   }
 }
 
 export async function loadScanContext(
   deps: ScanDeps = {},
-): Promise<{ circleId: string; memberRole: MemberRole }> {
+): Promise<{ circleId: string; memberRole: MemberRole; status: 'ok' | 'no_circle' | 'error' }> {
   const mocks = loadCareCircleMocks(deps.env);
   if (mocks) {
-    return { circleId: mocks.circle.id, memberRole: 'owner' };
+    return { circleId: mocks.circle.id, memberRole: 'owner', status: 'ok' };
   }
   const supabase =
     deps.supabase ??
@@ -363,8 +398,11 @@ export async function loadScanContext(
       .order('created_at', { ascending: true })
       .limit(1);
     const circleRows = Array.isArray(circlesRes.data) ? circlesRes.data : [];
+    if (circlesRes.error) {
+      return { circleId: '', memberRole: 'viewer', status: 'error' };
+    }
     if (circleRows.length === 0) {
-      return { circleId: '', memberRole: 'viewer' };
+      return { circleId: '', memberRole: 'viewer', status: 'no_circle' };
     }
     const rawCircle = { ...(circleRows[0] as Record<string, unknown>) };
     if (typeof rawCircle.created_at === 'string') {
@@ -377,15 +415,19 @@ export async function loadScanContext(
       .select('role')
       .eq('circle_id', circle.id)
       .eq('user_id', userId ?? '00000000-0000-0000-0000-000000000000');
+    if (roleRes.error) {
+      return { circleId: '', memberRole: 'viewer', status: 'error' };
+    }
     const memberRows = Array.isArray(roleRes.data) ? roleRes.data : [];
     const firstRole = (memberRows[0] as { role?: unknown } | undefined)?.role;
     const parsedRole = memberRoleSchema.safeParse(firstRole);
     return {
       circleId: circle.id,
       memberRole: parsedRole.success ? parsedRole.data : 'viewer',
+      status: 'ok',
     };
   } catch {
-    return { circleId: '', memberRole: 'viewer' };
+    return { circleId: '', memberRole: 'viewer', status: 'error' };
   }
 }
 
@@ -409,13 +451,26 @@ export function PrescriptionScanScreen({
   const { colors, radii, spacing, typography } = useTheme();
   const [circleId, setCircleId] = useState(initialCircleId ?? '');
   const [memberRole, setMemberRole] = useState<MemberRole>(initialMemberRole ?? 'viewer');
+  const [contextStatus, setContextStatus] = useState<'loading' | 'ok' | 'no_circle' | 'error'>(
+    initialCircleId !== undefined && initialMemberRole !== undefined ? 'ok' : 'loading',
+  );
+  const [contextReloadKey, setContextReloadKey] = useState(0);
   const [isScanning, setIsScanning] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const savingRef = useRef(false);
+  // The photo still in Storage for this screen, if any. Deleted when the screen closes without a
+  // save (Taha's decision: the photo goes once the medicine is saved, or the draft is dropped).
+  const imagePathRef = useRef<string | null>(null);
+  const depsRef = useRef(deps);
+  depsRef.current = deps;
+  const photoPicker = useMemo(
+    () => deps?.photoPicker ?? createExpoPrescriptionPhotoPicker(),
+    [deps?.photoPicker],
+  );
   const [lastPhoto, setLastPhoto] = useState<PickedPrescriptionPhoto | null>(null);
   const [imagePath, setImagePath] = useState<string | null>(null);
   const [draft, setDraft] = useState<ExtractPrescriptionOutput | null>(null);
-  const [errorCode, setErrorCode] = useState<
-    AiErrorCode | 'UPLOAD_FAILED' | 'FORBIDDEN_ROLE' | null
-  >(null);
+  const [errorCode, setErrorCode] = useState<ScanErrorCode | null>(null);
   const [saveFailed, setSaveFailed] = useState(false);
   const [paywallVisible, setPaywallVisible] = useState(false);
 
@@ -430,19 +485,38 @@ export function PrescriptionScanScreen({
     if (initialCircleId !== undefined && initialMemberRole !== undefined) {
       setCircleId(initialCircleId);
       setMemberRole(initialMemberRole);
+      setContextStatus('ok');
       return;
     }
     let cancelled = false;
+    setContextStatus('loading');
     void (async () => {
       const ctx = await loadScanContext(deps);
       if (cancelled) return;
       if (initialCircleId === undefined) setCircleId(ctx.circleId);
       if (initialMemberRole === undefined) setMemberRole(ctx.memberRole);
+      setContextStatus(ctx.status);
     })();
     return () => {
       cancelled = true;
     };
-  }, [deps, initialCircleId, initialMemberRole]);
+  }, [deps, initialCircleId, initialMemberRole, contextReloadKey]);
+
+  const rememberImagePath = useCallback((path: string | null) => {
+    imagePathRef.current = path;
+    setImagePath(path);
+  }, []);
+
+  // Leaving the screen (back, sign-in, manual entry) with a photo still uploaded counts as a
+  // discard. Best effort: the daily clean-up removes anything this misses.
+  useEffect(
+    () => () => {
+      const leftover = imagePathRef.current;
+      imagePathRef.current = null;
+      if (leftover) void discardScannedMedication({ imagePath: leftover }, depsRef.current);
+    },
+    [],
+  );
 
   const applyDraft = useCallback((extracted: ExtractPrescriptionOutput) => {
     setDraft(extracted);
@@ -462,6 +536,13 @@ export function PrescriptionScanScreen({
       setSaveFailed(false);
       setLastPhoto(photo);
 
+      // A new photo replaces the previous one: delete the previous one from Storage first.
+      const previous = imagePathRef.current;
+      if (!existingPath && previous) {
+        rememberImagePath(null);
+        void discardScannedMedication({ imagePath: previous }, deps);
+      }
+
       const res = await scanPrescriptionPhoto(
         {
           circleId,
@@ -473,7 +554,7 @@ export function PrescriptionScanScreen({
       );
 
       setIsScanning(false);
-      setImagePath(res.imagePath);
+      rememberImagePath(res.imagePath);
 
       if (res.ok) {
         applyDraft(res.draft);
@@ -487,37 +568,52 @@ export function PrescriptionScanScreen({
 
       setErrorCode(res.errorCode);
     },
-    [applyDraft, circleId, deps, memberRole, onNavigateSignIn],
+    [applyDraft, circleId, deps, memberRole, onNavigateSignIn, rememberImagePath],
   );
 
   const handleCapture = useCallback(
     async (mode: 'take' | 'pick') => {
       if (memberRole === 'viewer' || isScanning) return;
-      const picker = deps?.photoPicker;
-      if (!picker) return;
       const options: PrescriptionPhotoCaptureOptions = {
         maxDimensionPx: MAX_SCAN_IMAGE_DIMENSION_PX,
         jpegQuality: SCAN_JPEG_QUALITY,
       };
-      const picked =
-        mode === 'take' ? await picker.takePhoto(options) : await picker.pickPhoto(options);
+      let picked: PickedPrescriptionPhoto | null;
+      try {
+        picked =
+          mode === 'take'
+            ? await photoPicker.takePhoto(options)
+            : await photoPicker.pickPhoto(options);
+      } catch (error) {
+        setErrorCode(
+          // Checked by message too: an Error subclass can lose its prototype once compiled.
+          error instanceof PrescriptionPhotoPermissionError ||
+            (error instanceof Error && error.message === 'PHOTO_PERMISSION_DENIED')
+            ? 'PHOTO_PERMISSION_DENIED'
+            : 'PHOTO_INVALID',
+        );
+        return;
+      }
       if (!picked) return;
       await runScanWithPhoto(picked, null);
     },
-    [deps?.photoPicker, isScanning, memberRole, runScanWithPhoto],
+    [isScanning, memberRole, photoPicker, runScanWithPhoto],
   );
 
   const handleDiscard = useCallback(async () => {
-    const pathToDelete = imagePath;
+    const pathToDelete = imagePathRef.current;
     setDraft(null);
-    setImagePath(null);
+    rememberImagePath(null);
     setErrorCode(null);
     setSaveFailed(false);
     await discardScannedMedication({ imagePath: pathToDelete }, deps);
-  }, [deps, imagePath]);
+  }, [deps, rememberImagePath]);
 
   const handleConfirmSave = useCallback(async () => {
-    if (!draft || !imagePath) return;
+    if (!draft || !imagePath || savingRef.current) return;
+    // One save at a time: a second tap while the first is in flight would add the medicine twice.
+    savingRef.current = true;
+    setIsSaving(true);
     setSaveFailed(false);
 
     const times = timesText
@@ -548,13 +644,17 @@ export function PrescriptionScanScreen({
       deps,
     );
 
+    savingRef.current = false;
+    setIsSaving(false);
+
     if (!res.ok) {
       setSaveFailed(true);
       return;
     }
 
     setDraft(null);
-    setImagePath(null);
+    // Saved: confirmAndSaveScannedMedication already deleted the photo.
+    rememberImagePath(null);
     onSaved?.(res.medication);
   }, [
     circleId,
@@ -566,14 +666,17 @@ export function PrescriptionScanScreen({
     memberRole,
     name,
     onSaved,
+    rememberImagePath,
     strength,
     timesText,
   ]);
 
-  const canScan = memberRole === 'owner' || memberRole === 'helper';
+  const canScan = contextStatus === 'ok' && (memberRole === 'owner' || memberRole === 'helper');
 
+  // A missing score counts as low: the prompt asks for a score on every field, so a missing one
+  // means the model did not say how sure it is, and the person must check that field.
   const isLowConfidence = (score?: number): boolean =>
-    typeof score === 'number' && score < LOW_CONFIDENCE_THRESHOLD;
+    typeof score !== 'number' || score < LOW_CONFIDENCE_THRESHOLD;
 
   return (
     <ScrollView
@@ -590,7 +693,28 @@ export function PrescriptionScanScreen({
     >
       <Header title={en.medsScan.title} subtitle={en.medsScan.subtitle} />
 
-      {!canScan ? (
+      {contextStatus === 'loading' ? (
+        <View testID="scan-context-loading" style={[styles.statusRow, { gap: spacing.sm }]}>
+          <ActivityIndicator color={colors.primary} />
+        </View>
+      ) : null}
+
+      {contextStatus === 'error' || contextStatus === 'no_circle' ? (
+        <ScanNotice
+          testID="scan-context-error"
+          title={en.medsScan.contextErrorTitle}
+          message={
+            contextStatus === 'no_circle'
+              ? en.medsScan.contextNoCircleMessage
+              : en.medsScan.contextErrorMessage
+          }
+          actionTestID="scan-context-retry-button"
+          actionLabel={en.medsScan.retryCta}
+          onAction={() => setContextReloadKey((key) => key + 1)}
+        />
+      ) : null}
+
+      {contextStatus === 'ok' && !canScan ? (
         <Card>
           <Text
             testID="scan-viewer-restricted"
@@ -677,7 +801,28 @@ export function PrescriptionScanScreen({
         </Card>
       ) : null}
 
-      {errorCode === 'INPUT_INVALID' || errorCode === 'UPLOAD_FAILED' ? (
+      {errorCode === 'UPLOAD_FAILED' ? (
+        <ScanNotice
+          testID="scan-error-upload"
+          title={en.medsScan.errorUploadTitle}
+          message={en.medsScan.errorUploadMessage}
+          actionTestID="scan-upload-retry-button"
+          actionLabel={en.medsScan.retryCta}
+          onAction={() => {
+            if (lastPhoto) void runScanWithPhoto(lastPhoto, null);
+          }}
+        />
+      ) : null}
+
+      {errorCode === 'PHOTO_PERMISSION_DENIED' ? (
+        <ScanNotice
+          testID="scan-error-permission"
+          title={en.medsScan.errorPermissionTitle}
+          message={en.medsScan.errorPermissionMessage}
+        />
+      ) : null}
+
+      {errorCode === 'INPUT_INVALID' || errorCode === 'PHOTO_INVALID' ? (
         <Card>
           <View testID="scan-error-input-invalid" style={{ gap: spacing.sm }}>
             <Text
@@ -943,25 +1088,42 @@ export function PrescriptionScanScreen({
               />
             </View>
 
+            <View style={{ gap: spacing.xs }}>
+              <View style={styles.fieldHeader}>
+                <Text style={{ color: colors.textPrimary }}>{en.medsScan.scheduleLabel}</Text>
+                {isLowConfidence(draft.fieldConfidence.schedule) ? (
+                  <Text
+                    testID="scan-low-confidence-schedule"
+                    style={{
+                      color: colors.onWarningSurface,
+                      backgroundColor: colors.warningSurface,
+                    }}
+                  >
+                    {en.medsScan.lowConfidenceBadge}
+                  </Text>
+                ) : null}
+              </View>
+              {/* The schedule kind, days and interval are saved as read: show them, so the person
+                  confirms what is saved. "As needed" in particular creates no reminders at all. */}
+              <Text
+                testID="scan-draft-schedule-summary"
+                style={{
+                  color: colors.textPrimary,
+                  backgroundColor: isLowConfidence(draft.fieldConfidence.schedule)
+                    ? colors.warningSurface
+                    : undefined,
+                }}
+              >
+                {describeScheduleKind(draft.schedule)}
+              </Text>
+            </View>
+
             {draft.schedule.kind !== 'as_needed' ? (
               <View style={{ gap: spacing.xs }}>
-                <View style={styles.fieldHeader}>
-                  <Text style={{ color: colors.textPrimary }}>{en.medsScan.scheduleLabel}</Text>
-                  {isLowConfidence(draft.fieldConfidence.schedule) ? (
-                    <Text
-                      testID="scan-low-confidence-schedule"
-                      style={{
-                        color: colors.onWarningSurface,
-                        backgroundColor: colors.warningSurface,
-                      }}
-                    >
-                      {en.medsScan.lowConfidenceBadge}
-                    </Text>
-                  ) : null}
-                </View>
+                <Text style={{ color: colors.textPrimary }}>{en.medsScan.timesLabel}</Text>
                 <TextInput
                   testID="scan-draft-schedule-times-input"
-                  accessibilityLabel={en.medsScan.scheduleLabel}
+                  accessibilityLabel={en.medsScan.timesLabel}
                   value={timesText}
                   onChangeText={setTimesText}
                   style={[
@@ -1031,8 +1193,9 @@ export function PrescriptionScanScreen({
             <View style={[styles.captureRow, { gap: spacing.sm }]}>
               <View testID="scan-save-button" style={styles.flexButton}>
                 <Button
-                  label={en.medsScan.saveCta}
+                  label={isSaving ? en.medsScan.savingCta : en.medsScan.saveCta}
                   accessibilityLabel={en.medsScan.saveCta}
+                  disabled={isSaving}
                   onPress={() => {
                     void handleConfirmSave();
                   }}
@@ -1041,6 +1204,7 @@ export function PrescriptionScanScreen({
               <View testID="scan-discard-button" style={styles.flexButton}>
                 <Button
                   variant="secondary"
+                  disabled={isSaving}
                   label={en.medsScan.discardCta}
                   accessibilityLabel={en.medsScan.discardCta}
                   onPress={() => {
@@ -1066,6 +1230,77 @@ export function PrescriptionScanScreen({
 
       <PaywallSheet visible={paywallVisible} onClose={() => setPaywallVisible(false)} />
     </ScrollView>
+  );
+}
+
+const WEEKDAY_LABELS: Record<string, string> = {
+  mon: 'Mon',
+  tue: 'Tue',
+  wed: 'Wed',
+  thu: 'Thu',
+  fri: 'Fri',
+  sat: 'Sat',
+  sun: 'Sun',
+};
+
+export function describeScheduleKind(schedule: MedicationSchedule): string {
+  switch (schedule.kind) {
+    case 'daily':
+      return en.medsScan.scheduleDaily;
+    case 'weekly':
+      return en.medsScan.scheduleWeekly.replace(
+        '{days}',
+        schedule.days.map((day) => WEEKDAY_LABELS[day] ?? day).join(', '),
+      );
+    case 'every_n_days':
+      return en.medsScan.scheduleEveryNDays.replace('{n}', String(schedule.n));
+    case 'as_needed':
+      return en.medsScan.scheduleAsNeeded;
+  }
+}
+
+function ScanNotice(props: {
+  testID: string;
+  title: string;
+  message: string;
+  actionTestID?: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  const { colors, spacing, typography } = useTheme();
+  return (
+    <Card>
+      <View testID={props.testID} style={{ gap: spacing.sm }}>
+        <Text
+          style={{
+            color: colors.danger,
+            fontSize: typography.subtitle.fontSize,
+            lineHeight: typography.subtitle.lineHeight,
+            fontWeight: typography.subtitle.fontWeight,
+          }}
+        >
+          {props.title}
+        </Text>
+        <Text
+          style={{
+            color: colors.textSecondary,
+            fontSize: typography.body.fontSize,
+            lineHeight: typography.body.lineHeight,
+          }}
+        >
+          {props.message}
+        </Text>
+        {props.actionTestID && props.actionLabel && props.onAction ? (
+          <View testID={props.actionTestID}>
+            <Button
+              label={props.actionLabel}
+              accessibilityLabel={props.actionLabel}
+              onPress={props.onAction}
+            />
+          </View>
+        ) : null}
+      </View>
+    </Card>
   );
 }
 

@@ -212,6 +212,19 @@
     "errorQuotaTitle": "Monthly scan limit reached",
     "errorQuotaMessage": "Upgrade to the CareCircle Family plan to unlock more prescription scans.",
     "notSavedTitle": "Not saved",
-    "notSavedMessage": "Could not save this medication. Please check the fields and try again."
+    "notSavedMessage": "Could not save this medication. Please check the fields and try again.",
+    "savingCta": "Saving...",
+    "timesLabel": "Times (24-hour, comma separated)",
+    "scheduleDaily": "Every day",
+    "scheduleWeekly": "Every week on {days}",
+    "scheduleEveryNDays": "Every {n} days",
+    "scheduleAsNeeded": "Only when needed (no reminders)",
+    "contextErrorTitle": "Could not load your circle",
+    "contextErrorMessage": "Check your connection and try again.",
+    "contextNoCircleMessage": "Create or join a circle before adding medications.",
+    "errorUploadTitle": "Photo not sent",
+    "errorUploadMessage": "We could not upload the photo. Check your connection and try again.",
+    "errorPermissionTitle": "Camera or photos not allowed",
+    "errorPermissionMessage": "Allow CareCircle to use the camera or your photos in your phone's Settings, or add the medication by hand."
   }
 }

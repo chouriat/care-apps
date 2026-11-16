@@ -20,7 +20,15 @@
       "expo-secure-store",
       "expo-web-browser",
       "expo-notifications",
-      "@sentry/react-native/expo"
+      "@sentry/react-native/expo",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "CareCircle uses the camera to photograph a prescription label so it can fill in the medication for you.",
+          "photosPermission": "CareCircle reads the prescription photo you choose so it can fill in the medication for you.",
+          "microphonePermission": false
+        }
+      ]
     ]
   }
 }
