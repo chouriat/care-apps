@@ -3,6 +3,34 @@ import { ThemeProvider } from '@carecircle/ui';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import type { ComponentType } from 'react';
 
+// The default dependencies (no getClient / tracker passed) must use the app's real Supabase client
+// and the typed analytics client. Both are replaced here so the tests can see what they receive.
+const mockRpc = jest.fn();
+const mockFrom = jest.fn();
+const mockTrack = jest.fn();
+
+jest.mock('./features/auth/api', () => ({
+  ...jest.requireActual('./features/auth/api'),
+  getSupabaseClient: () => ({
+    rpc: (...args: unknown[]) => mockRpc(...args),
+    from: (...args: unknown[]) => mockFrom(...args),
+  }),
+}));
+
+jest.mock('./features/observability/api', () => ({
+  ...jest.requireActual('./features/observability/api'),
+  getAppObservability: () => ({
+    analytics: { track: (...args: unknown[]) => mockTrack(...args) },
+  }),
+}));
+
+beforeEach(() => {
+  mockRpc.mockReset();
+  mockFrom.mockReset();
+  mockTrack.mockReset();
+  mockTrack.mockResolvedValue(undefined);
+});
+
 async function pressByTestId(testId: string) {
   const node = screen.getByTestId(testId);
   const target =
@@ -10,16 +38,16 @@ async function pressByTestId(testId: string) {
   await fireEvent.press(target);
 }
 
-export type InviteAssignableRole = Exclude<MemberRole, 'owner'>;
+type InviteAssignableRole = Exclude<MemberRole, 'owner'>;
 
-export type CreateInviteErrorCode =
+type CreateInviteErrorCode =
   | 'VALIDATION_ERROR'
   | 'PERMISSION_DENIED'
   | 'CIRCLE_FULL'
   | 'NETWORK_ERROR'
   | 'CREATE_INVITE_FAILED';
 
-export type AcceptInviteErrorCode =
+type AcceptInviteErrorCode =
   | 'VALIDATION_ERROR'
   | 'INVITE_INVALID'
   | 'INVITE_EXPIRED'
@@ -29,13 +57,13 @@ export type AcceptInviteErrorCode =
   | 'NETWORK_ERROR'
   | 'ACCEPT_INVITE_FAILED';
 
-export type MemberActionErrorCode =
+type MemberActionErrorCode =
   | 'VALIDATION_ERROR'
   | 'PERMISSION_DENIED'
   | 'NETWORK_ERROR'
   | 'MEMBER_ACTION_FAILED';
 
-export interface CircleMemberItem {
+interface CircleMemberItem {
   circleId: string;
   userId: string;
   displayName: string;
@@ -43,7 +71,7 @@ export interface CircleMemberItem {
   joinedAt: string;
 }
 
-export interface CircleSettingsScreenProps {
+interface CircleSettingsScreenProps {
   circleId: string;
   circleName: string;
   currentUserId: string;
@@ -474,5 +502,337 @@ describe('CC-1b Invites and roles (create_invite, accept_invite, and /circle scr
       circleId: secondCircleId,
       role: 'helper',
     });
+  });
+});
+
+// Added in review: what the first tests above did not pin down.
+describe('CC-1b invites and roles: defaults, failures and every screen state', () => {
+  // A fake PostgREST builder that records the table, the values and every filter.
+  function recordingClient(result: { error: { message: string; code?: string } | null }) {
+    const calls: Array<[string, ...unknown[]]> = [];
+    const filters = {
+      eq: (col1: string, val1: string) => {
+        calls.push(['eq', col1, val1]);
+        return {
+          eq: async (col2: string, val2: string) => {
+            calls.push(['eq', col2, val2]);
+            return result;
+          },
+        };
+      },
+    };
+    const client = {
+      from: (table: string) => {
+        calls.push(['from', table]);
+        return {
+          update: (values: Record<string, unknown>) => {
+            calls.push(['update', values]);
+            return filters;
+          },
+          delete: () => {
+            calls.push(['delete']);
+            return filters;
+          },
+        };
+      },
+    };
+    return { calls, getClient: () => client };
+  }
+
+  it('parses a pasted link with spaces, a web link and a query string, and refuses other shapes', () => {
+    const { parseInviteToken } = loadCircleFeatureModule();
+
+    expect(parseInviteToken(`https://carecircle.app/invite/${VALID_TOKEN}`)).toBe(VALID_TOKEN);
+    expect(parseInviteToken(`${VALID_INVITE_URL}?utm_source=sms`)).toBe(VALID_TOKEN);
+    expect(parseInviteToken(`\n${VALID_INVITE_URL}\n`)).toBe(VALID_TOKEN);
+    expect(parseInviteToken(`carecircle://circle/${VALID_TOKEN}`)).toBeNull();
+    expect(parseInviteToken(`https://example.com/invite/${VALID_TOKEN}`)).toBeNull();
+    expect(parseInviteToken(`carecircle://invite/${VALID_TOKEN.slice(0, 31)}`)).toBeNull();
+    expect(parseInviteToken(`carecircle://invite/${VALID_TOKEN}/extra`)).toBeNull();
+  });
+
+  it('createInviteViaRpc uses the app Supabase client and sends cc_invite_sent with only { role } by default', async () => {
+    const { createInviteViaRpc } = loadCircleFeatureModule();
+    mockRpc.mockResolvedValue({
+      data: { url: VALID_INVITE_URL, expiresAt: '2026-11-22T12:00:00.000Z' },
+      error: null,
+    });
+
+    const res = await createInviteViaRpc({ circleId: CIRCLE_ID, role: 'viewer' });
+
+    expect(res).toEqual({ ok: true, url: VALID_INVITE_URL, expiresAt: '2026-11-22T12:00:00.000Z' });
+    expect(mockRpc).toHaveBeenCalledWith('create_invite', { circleId: CIRCLE_ID, role: 'viewer' });
+    expect(mockTrack).toHaveBeenCalledTimes(1);
+    expect(mockTrack).toHaveBeenCalledWith('cc_invite_sent', { role: 'viewer' });
+  });
+
+  it('createInviteViaRpc sends no event when the server refuses, and maps refusals and network failures', async () => {
+    const { createInviteViaRpc } = loadCircleFeatureModule();
+    const tracked: unknown[] = [];
+
+    const refused = await createInviteViaRpc(
+      { circleId: CIRCLE_ID, role: 'helper' },
+      {
+        getClient: () => ({
+          rpc: async () => ({
+            data: null,
+            error: { message: 'Only the circle owner can invite', code: '42501' },
+          }),
+        }),
+        trackInviteSent: (role) => tracked.push(role),
+      },
+    );
+    expect(refused).toEqual({ ok: false, errorCode: 'PERMISSION_DENIED', isOffline: false });
+
+    const offline = await createInviteViaRpc(
+      { circleId: CIRCLE_ID, role: 'helper' },
+      {
+        getClient: () => ({
+          rpc: async () => {
+            throw new TypeError('Network request failed');
+          },
+        }),
+        trackInviteSent: (role) => tracked.push(role),
+      },
+    );
+    expect(offline).toEqual({ ok: false, errorCode: 'NETWORK_ERROR', isOffline: true });
+    expect(tracked).toEqual([]);
+  });
+
+  it('acceptInviteViaRpc uses the app Supabase client and sends cc_invite_accepted with only { role } by default', async () => {
+    const { acceptInviteViaRpc } = loadCircleFeatureModule();
+    mockRpc.mockResolvedValue({ data: { circleId: CIRCLE_ID, role: 'viewer' }, error: null });
+
+    const res = await acceptInviteViaRpc({ tokenOrUrl: ` ${VALID_INVITE_URL} ` });
+
+    expect(res).toEqual({ ok: true, circleId: CIRCLE_ID, role: 'viewer' });
+    expect(mockRpc).toHaveBeenCalledWith('accept_invite', { token: VALID_TOKEN });
+    expect(mockTrack).toHaveBeenCalledTimes(1);
+    expect(mockTrack).toHaveBeenCalledWith('cc_invite_accepted', { role: 'viewer' });
+  });
+
+  it('acceptInviteViaRpc never calls the server for a malformed link, maps INVITE_INVALID and network failures, and sends no event on any failure', async () => {
+    const { acceptInviteViaRpc } = loadCircleFeatureModule();
+    const tracked: unknown[] = [];
+    const trackInviteAccepted = (role?: InviteAssignableRole) => tracked.push(role ?? 'none');
+
+    const malformed = await acceptInviteViaRpc(
+      { tokenOrUrl: 'carecircle://invite/short' },
+      { trackInviteAccepted },
+    );
+    expect(malformed).toEqual({ ok: false, errorCode: 'VALIDATION_ERROR', isOffline: false });
+    expect(mockRpc).not.toHaveBeenCalled();
+
+    for (const [serverMsg, expectedCode] of [
+      ['INVITE_INVALID', 'INVITE_INVALID'],
+      ['INVITE_EXPIRED', 'INVITE_EXPIRED'],
+      ['INVITE_USED', 'INVITE_USED'],
+      ['CIRCLE_FULL', 'CIRCLE_FULL'],
+    ] as const) {
+      const res = await acceptInviteViaRpc(
+        { tokenOrUrl: VALID_TOKEN },
+        {
+          getClient: () => ({
+            rpc: async () => ({ data: null, error: { message: serverMsg, code: 'P0001' } }),
+          }),
+          trackInviteAccepted,
+        },
+      );
+      expect(res).toEqual({ ok: false, errorCode: expectedCode, isOffline: false });
+    }
+
+    // Any other database error (also code P0001) is not one of the invite codes
+    const other = await acceptInviteViaRpc(
+      { tokenOrUrl: VALID_TOKEN },
+      {
+        getClient: () => ({
+          rpc: async () => ({
+            data: null,
+            error: { message: 'Something else went wrong in the database', code: 'P0001' },
+          }),
+        }),
+        trackInviteAccepted,
+      },
+    );
+    expect(other).toEqual({ ok: false, errorCode: 'ACCEPT_INVITE_FAILED', isOffline: false });
+
+    const offline = await acceptInviteViaRpc(
+      { tokenOrUrl: VALID_TOKEN },
+      {
+        getClient: () => ({
+          rpc: async () => {
+            throw new TypeError('Network request failed');
+          },
+        }),
+        trackInviteAccepted,
+      },
+    );
+    expect(offline).toEqual({ ok: false, errorCode: 'NETWORK_ERROR', isOffline: true });
+    expect(tracked).toEqual([]);
+  });
+
+  it('updateMemberRole and removeCircleMember touch exactly one member row (circle_id AND user_id filters)', async () => {
+    const { updateMemberRole, removeCircleMember } = loadCircleFeatureModule();
+
+    const update = recordingClient({ error: null });
+    expect(
+      await updateMemberRole(
+        { circleId: CIRCLE_ID, targetUserId: VIEWER_ID, role: 'helper' },
+        { getClient: update.getClient as never },
+      ),
+    ).toEqual({ ok: true });
+    expect(update.calls).toEqual([
+      ['from', 'circle_members'],
+      ['update', { role: 'helper' }],
+      ['eq', 'circle_id', CIRCLE_ID],
+      ['eq', 'user_id', VIEWER_ID],
+    ]);
+
+    const remove = recordingClient({ error: null });
+    expect(
+      await removeCircleMember(
+        { circleId: CIRCLE_ID, targetUserId: HELPER_ID },
+        { getClient: remove.getClient as never },
+      ),
+    ).toEqual({ ok: true });
+    expect(remove.calls).toEqual([
+      ['from', 'circle_members'],
+      ['delete'],
+      ['eq', 'circle_id', CIRCLE_ID],
+      ['eq', 'user_id', HELPER_ID],
+    ]);
+  });
+
+  it('a helper sees the member list but no invite, role-change or remove controls', async () => {
+    const { CircleSettingsScreen } = loadCircleFeatureModule();
+
+    await render(
+      <ThemeProvider>
+        <CircleSettingsScreen
+          circleId={CIRCLE_ID}
+          circleName="Family Care"
+          currentUserId={HELPER_ID}
+          currentUserRole="helper"
+          members={SAMPLE_MEMBERS}
+          inviteUrl={VALID_INVITE_URL}
+          errorCode="CIRCLE_FULL"
+        />
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByTestId('circle-member-list')).toBeTruthy();
+    expect(screen.getByText('Nadia (Owner)')).toBeTruthy();
+    expect(screen.getByText('Samira (Viewer)')).toBeTruthy();
+    expect(screen.queryByTestId('circle-create-invite-button')).toBeNull();
+    expect(screen.queryByTestId('circle-invite-role-helper')).toBeNull();
+    expect(screen.queryByTestId('circle-invite-role-viewer')).toBeNull();
+    // Only the owner may see invite links (Taha's decision)
+    expect(screen.queryByTestId('circle-invite-link-value')).toBeNull();
+    expect(screen.queryByText(VALID_INVITE_URL)).toBeNull();
+    expect(screen.queryByTestId('circle-upgrade-paywall-button')).toBeNull();
+    for (const member of SAMPLE_MEMBERS) {
+      expect(screen.queryByTestId(`circle-member-role-toggle-${member.userId}`)).toBeNull();
+      expect(screen.queryByTestId(`circle-member-remove-${member.userId}`)).toBeNull();
+    }
+  });
+
+  it('a viewer never sees the invite link either', async () => {
+    const { CircleSettingsScreen } = loadCircleFeatureModule();
+
+    await render(
+      <ThemeProvider>
+        <CircleSettingsScreen
+          circleId={CIRCLE_ID}
+          circleName="Family Care"
+          currentUserId={VIEWER_ID}
+          currentUserRole="viewer"
+          members={SAMPLE_MEMBERS}
+          inviteUrl={VALID_INVITE_URL}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(screen.queryByTestId('circle-invite-link-value')).toBeNull();
+    expect(screen.queryByText(VALID_INVITE_URL)).toBeNull();
+    for (const member of SAMPLE_MEMBERS) {
+      expect(screen.queryByTestId(`circle-member-role-toggle-${member.userId}`)).toBeNull();
+      expect(screen.queryByTestId(`circle-member-remove-${member.userId}`)).toBeNull();
+    }
+  });
+
+  it('the owner invites a helper by default, turns a viewer into a helper, and sees no upgrade button without CIRCLE_FULL', async () => {
+    const { CircleSettingsScreen } = loadCircleFeatureModule();
+    const onCreateInvite = jest.fn();
+    const onChangeMemberRole = jest.fn();
+
+    await render(
+      <ThemeProvider>
+        <CircleSettingsScreen
+          circleId={CIRCLE_ID}
+          circleName="Family Care"
+          currentUserId={OWNER_ID}
+          currentUserRole="owner"
+          members={SAMPLE_MEMBERS}
+          onCreateInvite={onCreateInvite}
+          onChangeMemberRole={onChangeMemberRole}
+        />
+      </ThemeProvider>,
+    );
+
+    await pressByTestId('circle-create-invite-button');
+    expect(onCreateInvite).toHaveBeenCalledWith('helper');
+
+    await pressByTestId(`circle-member-role-toggle-${VIEWER_ID}`);
+    expect(onChangeMemberRole).toHaveBeenCalledWith(VIEWER_ID, 'helper');
+
+    expect(screen.queryByTestId('circle-upgrade-paywall-button')).toBeNull();
+    expect(screen.queryByTestId('circle-invite-link-value')).toBeNull();
+  });
+
+  it.each([
+    ['loading', { isLoading: true }, 'circle-settings-loading'],
+    ['error', { hasError: true }, 'circle-settings-error'],
+    ['offline', { isOffline: true }, 'circle-settings-offline'],
+  ] as const)('shows the %s state and no invite controls', async (_name, stateProps, testId) => {
+    const { CircleSettingsScreen } = loadCircleFeatureModule();
+
+    await render(
+      <ThemeProvider>
+        <CircleSettingsScreen
+          circleId={CIRCLE_ID}
+          circleName="Family Care"
+          currentUserId={OWNER_ID}
+          currentUserRole="owner"
+          members={[]}
+          onRetry={jest.fn()}
+          {...stateProps}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByTestId(testId)).toBeTruthy();
+    expect(screen.queryByTestId('circle-create-invite-button')).toBeNull();
+  });
+
+  it('the error state has a retry button', async () => {
+    const { CircleSettingsScreen } = loadCircleFeatureModule();
+    const onRetry = jest.fn();
+
+    await render(
+      <ThemeProvider>
+        <CircleSettingsScreen
+          circleId={CIRCLE_ID}
+          circleName="Family Care"
+          currentUserId={OWNER_ID}
+          currentUserRole="owner"
+          members={[]}
+          hasError
+          onRetry={onRetry}
+        />
+      </ThemeProvider>,
+    );
+
+    await pressByTestId('circle-settings-retry-button');
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 });

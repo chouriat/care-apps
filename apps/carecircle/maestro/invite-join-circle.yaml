@@ -1,5 +1,8 @@
 # CC-1b [safety 1/2]: Two-user invite flow (owner creates circle and invite link; second user
 # signs in on clean device state, accepts the invite link, and appears in the circle member list).
+# Needs the same local stack as sign-in-magic-link.yaml. The code PR must also run this flow in
+# CI (apps/carecircle/maestro/ci-run.sh runs only the sign-in flow today).
+# The member list shows each member's role label (Owner, Helper, Viewer) next to the name.
 appId: app.carecircle.mobile
 env:
   OWNER_EMAIL: owner-invite@example.com
@@ -71,7 +74,7 @@ env:
 - tapOn:
     id: 'onboarding-choice-join'
 - tapOn:
-    id: 'onboarding-invite-link-input'
+    id: 'onboarding-join-input'
 - pasteText
 - hideKeyboard
 - tapOn:
@@ -83,3 +86,16 @@ env:
     id: 'circle-settings-screen'
 - assertVisible:
     id: 'circle-member-list'
+- assertVisible:
+    text: 'Owner'
+    childOf:
+      id: 'circle-member-list'
+- assertVisible:
+    text: 'Helper'
+    childOf:
+      id: 'circle-member-list'
+# A helper sees no invite controls and no invite link
+- assertNotVisible:
+    id: 'circle-create-invite-button'
+- assertNotVisible:
+    id: 'circle-invite-link-value'
