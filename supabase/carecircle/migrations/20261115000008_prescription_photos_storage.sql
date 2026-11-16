@@ -132,11 +132,11 @@ begin
       '15 3 * * *',
       $job$
       select net.http_post(
-        url := (select decrypted_secret from vault.decrypted_secrets where name = 'project_url' limit 1)
+        url := rtrim((select decrypted_secret from vault.decrypted_secrets where name = 'project_url' order by created_at desc limit 1), '/')
                || '/functions/v1/cleanup-prescription-photos',
         headers := jsonb_build_object(
           'Content-Type', 'application/json',
-          'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'service_role_key' limit 1)
+          'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'service_role_key' order by created_at desc limit 1)
         ),
         body := '{}'::jsonb
       ) as request_id;
