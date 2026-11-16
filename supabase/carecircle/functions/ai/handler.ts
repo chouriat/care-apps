@@ -450,7 +450,12 @@ export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
       providerImage = { bytes: photo.bytes, mimeType: 'image/jpeg' };
     }
 
-    const provider = providerMap[route.provider];
+    const useCiFake =
+      getEnv('CARECIRCLE_CI_FAKE_AI') === '1' &&
+      ['http://kong:8000', 'http://127.0.0.1:54321'].includes(
+        (getEnv('SUPABASE_URL') ?? '').trim().replace(/\/+$/, ''),
+      );
+    const provider = useCiFake ? providerMap.fake : providerMap[route.provider];
     const { model, promptVersion: prompt_version, schema } = route;
     const startedAt = now();
     let input_tokens = 0;
