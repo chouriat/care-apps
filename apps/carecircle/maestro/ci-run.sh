@@ -23,6 +23,20 @@ echo "::group::App log (ReactNativeJS, crashes)"
 adb logcat -d -s ReactNativeJS:V ReactNative:V AndroidRuntime:E | tail -n 200
 echo "::endgroup::"
 echo "::group::Screen contents"
-maestro hierarchy 2>/dev/null | grep -E '"(text|resource-id|accessibilityText)" : "[^"]+' -o | head -n 80
+# Indented by nesting depth, so a failed `childOf` check shows which element holds which.
+maestro hierarchy 2>/dev/null > /tmp/maestro-hierarchy.json
+python3 - /tmp/maestro-hierarchy.json <<'PY' | head -n 120
+import json, sys
+text = open(sys.argv[1]).read()
+root = json.loads(text[text.index('{'):])
+def walk(node, depth):
+    a = node.get('attributes', {})
+    parts = [f'{k}={a[k]!r}' for k in ('resource-id', 'text', 'accessibilityText') if a.get(k)]
+    if parts:
+        print('  ' * depth + ' '.join(parts) + f" {a.get('bounds', '')}")
+    for child in node.get('children', []):
+        walk(child, depth + 1)
+walk(root, 0)
+PY
 echo "::endgroup::"
 exit 1
