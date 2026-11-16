@@ -56,7 +56,8 @@ This document specifies **Contract C2** for CareCircle's two AI tasks (`carecirc
 
 ```json
 {
-  "audioPath": "circles/<circle_id>/visits/<filename>.m4a",
+  "circleId": "c1c00001-0000-4000-8000-000000000001",
+  "audioPath": "<circle_id>/<uuid>.m4a",
   "text": "Doctor said blood pressure is stable...",
   "knownMeds": [
     {
@@ -69,6 +70,7 @@ This document specifies **Contract C2** for CareCircle's two AI tasks (`carecirc
 ```
 
 - At least one of `audioPath` or `text` must be provided (non-empty trimmed string).
+- `circleId` is required with `text`; with `audioPath` it must match the circle in the path.
 - `knownMeds`: required array of `{ id: uuid, name: non-empty string, strength: non-empty string | null }`.
 
 ### Output (`summarizeVisitOutputSchema` / `visitSchema`)

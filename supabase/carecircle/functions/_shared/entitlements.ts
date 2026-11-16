@@ -88,3 +88,106 @@ export async function verifyServerEntitlement(
 
   return { allowed: true };
 }
+
+export interface CircleOwnerLookupStore extends EntitlementReadStore {
+  getCircleOwnerUserId(
+    circleId: string,
+  ): Promise<{ data: string | null; error: { message: string } | null }>;
+}
+
+export interface VerifyCircleFamilyEntitlementInput {
+  circleId: string;
+  store: CircleOwnerLookupStore;
+  now?: Date;
+}
+
+/**
+ * Checks whether a circle is on the CareCircle Family plan by looking up the circle owner's
+ * `user_id` in `public.circle_members` (`role = 'owner'`) and verifying their `carecircle_family`
+ * row in `public.entitlements` via `verifyServerEntitlement` (same rule as `accept_invite`).
+ */
+export async function verifyCircleFamilyEntitlement(
+  input: VerifyCircleFamilyEntitlementInput,
+): Promise<ServerEntitlementVerification> {
+  const circleId = typeof input.circleId === 'string' ? input.circleId.trim() : '';
+  if (!circleId) {
+    return { allowed: false, reason: 'ENTITLEMENT_REQUIRED' };
+  }
+
+  let ownerLookup: { data: string | null; error: { message: string } | null };
+  try {
+    ownerLookup = await input.store.getCircleOwnerUserId(circleId);
+  } catch {
+    return { allowed: false, reason: 'STORE_ERROR' };
+  }
+
+  if (ownerLookup.error !== null) {
+    return { allowed: false, reason: 'STORE_ERROR' };
+  }
+
+  const ownerUserId = ownerLookup.data;
+  if (!ownerUserId) {
+    return { allowed: false, reason: 'ENTITLEMENT_REQUIRED' };
+  }
+
+  return verifyServerEntitlement({
+    authenticatedUserId: ownerUserId,
+    entitlement: CARECIRCLE_FAMILY_ENTITLEMENT,
+    store: input.store,
+    now: input.now,
+  });
+}
+
+export function createPostgrestCircleEntitlementStore(
+  fetchImpl: typeof fetch,
+  getEnv: (key: string) => string | undefined,
+): CircleOwnerLookupStore {
+  return {
+    async getCircleOwnerUserId(circleId: string) {
+      const url = getEnv('SUPABASE_URL');
+      const apikey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+      if (!url || !apikey) {
+        return { data: null, error: { message: 'circle owner lookup not configured' } };
+      }
+      const query = `circle_id=eq.${encodeURIComponent(circleId)}&role=eq.owner&select=user_id&limit=1`;
+      const res = await fetchImpl(`${url}/rest/v1/circle_members?${query}`, {
+        method: 'GET',
+        headers: {
+          authorization: `Bearer ${apikey}`,
+          apikey,
+        },
+      });
+      if (!res.ok) {
+        return { data: null, error: { message: `circle_members owner lookup HTTP ${res.status}` } };
+      }
+      const rows = (await res.json()) as Array<{ user_id?: unknown }>;
+      const ownerId =
+        Array.isArray(rows) && typeof rows[0]?.user_id === 'string' ? rows[0].user_id : null;
+      return { data: ownerId, error: null };
+    },
+
+    async getEntitlement(userId: string, entitlement: CareCircleEntitlementId) {
+      const url = getEnv('SUPABASE_URL');
+      const apikey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+      if (!url || !apikey) {
+        return { data: null, error: { message: 'entitlements lookup not configured' } };
+      }
+      const query = `user_id=eq.${encodeURIComponent(userId)}&entitlement=eq.${encodeURIComponent(entitlement)}&select=user_id,entitlement,active,expires_at&limit=1`;
+      const res = await fetchImpl(`${url}/rest/v1/entitlements?${query}`, {
+        method: 'GET',
+        headers: {
+          authorization: `Bearer ${apikey}`,
+          apikey,
+        },
+      });
+      if (!res.ok) {
+        return { data: null, error: { message: `entitlements lookup HTTP ${res.status}` } };
+      }
+      const rows = (await res.json()) as EntitlementRow[];
+      return {
+        data: Array.isArray(rows) && rows[0] ? rows[0] : null,
+        error: null,
+      };
+    },
+  };
+}

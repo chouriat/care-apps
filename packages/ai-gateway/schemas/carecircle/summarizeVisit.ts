@@ -14,6 +14,7 @@ export const knownMedInputSchema = z
 
 export const summarizeVisitInputSchema = z
   .object({
+    circleId: z.string().uuid().optional(),
     audioPath: z.string().trim().min(1).optional(),
     text: z.string().trim().min(1).optional(),
     knownMeds: z.array(knownMedInputSchema),
