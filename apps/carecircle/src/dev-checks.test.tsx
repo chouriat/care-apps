@@ -194,6 +194,37 @@ describe('F-6b/F-7b dev-checks screen and Sentry/PostHog build config', () => {
     }
   });
 
+  it('refuses to build a store profile with mocks mode on (EXPO_PUBLIC_MOCKS or MOCKS)', () => {
+    const saved = { pub: process.env.EXPO_PUBLIC_MOCKS, plain: process.env.MOCKS };
+    try {
+      for (const key of ['EXPO_PUBLIC_MOCKS', 'MOCKS'] as const) {
+        delete process.env.EXPO_PUBLIC_MOCKS;
+        delete process.env.MOCKS;
+        process.env[key] = '1';
+        for (const profile of ['production', 'store']) {
+          process.env.EAS_BUILD_PROFILE = profile;
+          expect(() => appConfigFn({ config: appJson.expo })).toThrow(new RegExp(key));
+        }
+        for (const profile of ['development', 'preview']) {
+          process.env.EAS_BUILD_PROFILE = profile;
+          expect(() => appConfigFn({ config: appJson.expo })).not.toThrow();
+        }
+        delete process.env.EAS_BUILD_PROFILE; // local `pnpm start:mocks`
+        expect(() => appConfigFn({ config: appJson.expo })).not.toThrow();
+      }
+      delete process.env.EXPO_PUBLIC_MOCKS;
+      delete process.env.MOCKS;
+      process.env.EAS_BUILD_PROFILE = 'production';
+      expect(() => appConfigFn({ config: appJson.expo })).not.toThrow();
+    } finally {
+      delete process.env.EAS_BUILD_PROFILE;
+      if (saved.pub === undefined) delete process.env.EXPO_PUBLIC_MOCKS;
+      else process.env.EXPO_PUBLIC_MOCKS = saved.pub;
+      if (saved.plain === undefined) delete process.env.MOCKS;
+      else process.env.MOCKS = saved.plain;
+    }
+  });
+
   it('configures @sentry/react-native/expo and uploads source maps only with token, org and project', () => {
     expect(appJson.expo.plugins).toContain('@sentry/react-native/expo');
     const sentryOptions = () =>

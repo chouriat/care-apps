@@ -421,4 +421,179 @@ describe('CC-4a Prescription photo scan screen (/meds/scan)', () => {
     expect(backend.uploads.length).toBe(uploadsBeforeRetry);
     expect(callCount).toBe(6);
   });
+
+  it('edits schedule kind (weekly, every_n_days, as_needed) and shows field-specific validation errors instead of generic "Not saved"', async () => {
+    const backend = createFakeScanBackend();
+    const onSaved = jest.fn();
+
+    const deps: ScanDeps = {
+      supabase: backend.supabase,
+      photoId: PHOTO_ID,
+      photoPicker: {
+        takePhoto: async () => ({
+          bytes: makeJpegBytes(1024),
+          width: 800,
+          height: 600,
+          contentType: 'image/jpeg',
+        }),
+        pickPhoto: async () => null,
+      },
+      callExtractPrescription: async () => ({
+        ok: true,
+        output: SAMPLE_EXTRACTED,
+        model: 'claude-haiku-4-5',
+        latencyMs: 120,
+      }),
+      trackMedAddedFromPhoto: () => undefined,
+    };
+
+    await render(
+      <UI.ThemeProvider>
+        <PrescriptionScanScreen
+          circleId={CIRCLE_ID}
+          memberRole="owner"
+          deps={deps}
+          onSaved={onSaved}
+        />
+      </UI.ThemeProvider>,
+    );
+
+    await fireEvent.press(within(screen.getByTestId('scan-take-photo-button')).getByRole('button'));
+    await waitFor(() => expect(screen.getByTestId('scan-draft-review')).toBeTruthy());
+
+    // Enter invalid time ("8am"): shows specific times error, NOT "Not saved", and does not call server
+    await fireEvent.changeText(screen.getByTestId('scan-draft-schedule-times-input'), '8am');
+    await fireEvent.press(within(screen.getByTestId('scan-save-button')).getByRole('button'));
+
+    expect(screen.getByTestId('scan-field-validation-error')).toHaveTextContent(
+      en.medsScan.invalidTimesMessage,
+    );
+    expect(screen.queryByTestId('scan-not-saved-notice')).toBeNull();
+    expect(backend.insertedMeds).toHaveLength(0);
+
+    // Switch to weekly and enter invalid day ("monday"): shows specific days error
+    await fireEvent.press(
+      within(screen.getByTestId('scan-schedule-kind-weekly')).getByRole('button'),
+    );
+    await fireEvent.changeText(screen.getByTestId('scan-draft-schedule-times-input'), '09:00');
+    await fireEvent.changeText(screen.getByTestId('scan-draft-schedule-days-input'), 'monday');
+    await fireEvent.press(within(screen.getByTestId('scan-save-button')).getByRole('button'));
+
+    expect(screen.getByTestId('scan-field-validation-error')).toHaveTextContent(
+      en.medsScan.invalidDaysMessage,
+    );
+    expect(backend.insertedMeds).toHaveLength(0);
+
+    // Switch to every_n_days with valid n=3 and time=09:00 and save
+    await fireEvent.press(
+      within(screen.getByTestId('scan-schedule-kind-every_n_days')).getByRole('button'),
+    );
+    await fireEvent.changeText(screen.getByTestId('scan-draft-schedule-interval-input'), '3');
+    expect(screen.getByTestId('scan-draft-schedule-summary')).toHaveTextContent('Every 3 days');
+
+    await fireEvent.press(within(screen.getByTestId('scan-save-button')).getByRole('button'));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(backend.insertedMeds[0]?.schedule).toEqual({
+      kind: 'every_n_days',
+      n: 3,
+      times: ['09:00'],
+    });
+    expect(backend.insertedMeds[0]).not.toHaveProperty('start_date');
+  });
+
+  it('saves what the person typed, not what the AI read, for every text field', async () => {
+    const backend = createFakeScanBackend();
+    const onSaved = jest.fn();
+    const deps: ScanDeps = {
+      supabase: backend.supabase,
+      photoId: PHOTO_ID,
+      photoPicker: {
+        takePhoto: async () => ({
+          bytes: makeJpegBytes(1024),
+          width: 800,
+          height: 600,
+          contentType: 'image/jpeg',
+        }),
+        pickPhoto: async () => null,
+      },
+      callExtractPrescription: async () => ({
+        ok: true,
+        output: SAMPLE_EXTRACTED,
+        model: 'claude-haiku-4-5',
+        latencyMs: 120,
+      }),
+      trackMedAddedFromPhoto: () => undefined,
+    };
+
+    await render(
+      <UI.ThemeProvider>
+        <PrescriptionScanScreen
+          circleId={CIRCLE_ID}
+          memberRole="owner"
+          deps={deps}
+          onSaved={onSaved}
+        />
+      </UI.ThemeProvider>,
+    );
+
+    await fireEvent.press(within(screen.getByTestId('scan-take-photo-button')).getByRole('button'));
+    await waitFor(() => expect(screen.getByTestId('scan-draft-review')).toBeTruthy());
+
+    await fireEvent.changeText(screen.getByTestId('scan-draft-name-input'), '  Metformin XR ');
+    await fireEvent.changeText(screen.getByTestId('scan-draft-strength-input'), '750 mg');
+    await fireEvent.changeText(screen.getByTestId('scan-draft-dose-text-input'), '2 tablets');
+    await fireEvent.changeText(screen.getByTestId('scan-draft-instructions-input'), '');
+    await fireEvent.changeText(screen.getByTestId('scan-draft-schedule-times-input'), '07:30');
+    await fireEvent.press(within(screen.getByTestId('scan-save-button')).getByRole('button'));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(backend.insertedMeds).toHaveLength(1);
+    expect(backend.insertedMeds[0]).toMatchObject({
+      name: 'Metformin XR',
+      strength: '750 mg',
+      dose_text: '2 tablets',
+      instructions: null,
+      schedule: { kind: 'daily', times: ['07:30'] },
+      source: 'photo',
+    });
+  });
+
+  it('skips Supabase Storage upload and delete when MOCKS=1 and returns the mock draft', async () => {
+    const onSaved = jest.fn();
+    const deps: ScanDeps = {
+      env: { MOCKS: '1' },
+      photoId: PHOTO_ID,
+      photoPicker: {
+        takePhoto: async () => ({
+          bytes: makeJpegBytes(1024),
+          width: 800,
+          height: 600,
+          contentType: 'image/jpeg',
+        }),
+        pickPhoto: async () => null,
+      },
+      trackMedAddedFromPhoto: () => undefined,
+    };
+
+    await render(
+      <UI.ThemeProvider>
+        <PrescriptionScanScreen
+          circleId={CIRCLE_ID}
+          memberRole="owner"
+          deps={deps}
+          onSaved={onSaved}
+        />
+      </UI.ThemeProvider>,
+    );
+
+    await fireEvent.press(within(screen.getByTestId('scan-take-photo-button')).getByRole('button'));
+    await waitFor(() => expect(screen.getByTestId('scan-draft-review')).toBeTruthy());
+
+    await fireEvent.press(within(screen.getByTestId('scan-save-button')).getByRole('button'));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(onSaved.mock.calls[0]?.[0]).toMatchObject({
+      name: 'Metformin',
+      source: 'photo',
+    });
+  });
 });

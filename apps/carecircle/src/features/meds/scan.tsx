@@ -10,22 +10,21 @@ import {
 } from '@carecircle/ai-gateway/schemas/carecircle/extractPrescription';
 import {
   circleRowSchema,
-  medicationRowSchema,
   memberRoleSchema,
   scheduleSchema,
-  validateAnalyticsEvent,
   type Medication,
-  type MedicationRow,
   type MedicationSchedule,
   type MemberRole,
 } from '@carecircle/core';
 import {
   Button,
   Card,
+  ConfirmDraft,
   Header,
   LOW_CONFIDENCE_THRESHOLD,
   MIN_TOUCH_TARGET_PT,
   useTheme,
+  type DraftField,
 } from '@carecircle/ui';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -33,15 +32,16 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View } from
 import en from '../../../i18n/en.json';
 import { getSupabaseClient, resolveSupabaseConfig } from '../auth/api';
 import { loadCareCircleMocks } from '../mocks';
-import { getAppObservability } from '../observability/api';
 import { PaywallSheet } from '../paywall/components';
-import { loadTodaySnapshot, type TodayDeps } from '../today/api';
+import { type TodayDeps } from '../today/api';
+import { addMedication } from './api';
 import {
   PrescriptionPhotoPermissionError,
   createExpoPrescriptionPhotoPicker,
 } from './photo-picker';
 import {
   MAX_PRESCRIPTION_PHOTO_BYTES,
+  buildPrescriptionPhotoPath,
   createPrescriptionPhotoId,
   deletePrescriptionPhoto,
   uploadPrescriptionPhoto,
@@ -50,6 +50,9 @@ import {
 
 export const MAX_SCAN_IMAGE_DIMENSION_PX = 1600;
 export const SCAN_JPEG_QUALITY = 0.8;
+
+const TIME_24H_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
+const VALID_WEEKDAYS = new Set(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']);
 
 export interface PickedPrescriptionPhoto {
   bytes: Uint8Array;
@@ -165,10 +168,6 @@ export async function scanPrescriptionPhoto(
   }
 
   const mocks = loadCareCircleMocks(deps.env);
-  const supabase =
-    deps.supabase ??
-    (getSupabaseClient() as unknown as RxStorageSupabaseLike & Pick<SupabaseClient, 'from'>);
-
   let imagePath = input.existingImagePath ?? null;
 
   if (!imagePath) {
@@ -181,6 +180,26 @@ export async function scanPrescriptionPhoto(
     } catch {
       return { ok: false, imagePath: null, errorCode: 'PHOTO_INVALID' };
     }
+
+    // In mocks mode (without an explicit test supabase client), skip Supabase Storage upload
+    // and use a synthetic path so the scan flow works offline with MOCKS=1.
+    if (mocks && !deps.supabase) {
+      const mockCircleId = input.circleId || mocks.circle.id;
+      imagePath = buildPrescriptionPhotoPath(
+        mockCircleId,
+        deps.photoId ?? createPrescriptionPhotoId(),
+      );
+      return {
+        ok: true,
+        imagePath,
+        draft: extractPrescriptionOutputSchema.parse(mocks.aiResponses.extractPrescription),
+      };
+    }
+
+    const supabase =
+      deps.supabase ??
+      (getSupabaseClient() as unknown as RxStorageSupabaseLike & Pick<SupabaseClient, 'from'>);
+
     try {
       const uploaded = await uploadPrescriptionPhoto({
         supabase,
@@ -244,27 +263,117 @@ export async function scanPrescriptionPhoto(
   };
 }
 
-function medicationFromRow(row: MedicationRow): Medication {
-  return {
-    id: row.id,
-    circleId: row.circle_id,
-    name: row.name,
-    strength: row.strength,
-    doseText: row.dose_text,
-    schedule: row.schedule,
-    instructions: row.instructions,
-    startDate: row.start_date,
-    endDate: row.end_date,
-    active: row.active,
-    source: row.source,
-  };
-}
+export type DraftValidationResult =
+  | {
+      ok: true;
+      name: string;
+      strength: string | null;
+      doseText: string;
+      schedule: MedicationSchedule;
+      instructions: string | null;
+    }
+  | {
+      ok: false;
+      field: 'name' | 'doseText' | 'times' | 'days' | 'interval';
+      message: string;
+    };
 
-function defaultTrackMedAddedFromPhoto(): void {
-  const payload = validateAnalyticsEvent('cc_med_added', { source: 'photo' });
-  void getAppObservability()
-    .analytics.track('cc_med_added', payload as { source: 'photo' })
-    .catch(() => undefined);
+export function validateScannedDraftFields(input: {
+  name: string;
+  strength: string;
+  doseText: string;
+  instructions: string;
+  scheduleKind: 'daily' | 'weekly' | 'every_n_days' | 'as_needed';
+  timesText: string;
+  daysText: string;
+  intervalText: string;
+}): DraftValidationResult {
+  const name = input.name.trim();
+  if (!name) {
+    return { ok: false, field: 'name', message: en.medsScan.invalidNameMessage };
+  }
+
+  const doseText = input.doseText.trim();
+  if (!doseText) {
+    return { ok: false, field: 'doseText', message: en.medsScan.invalidDoseTextMessage };
+  }
+
+  const strength = input.strength.trim() || null;
+  const instructions = input.instructions.trim() || null;
+
+  if (input.scheduleKind === 'as_needed') {
+    return {
+      ok: true,
+      name,
+      strength,
+      doseText,
+      schedule: { kind: 'as_needed' },
+      instructions,
+    };
+  }
+
+  const times = input.timesText
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (times.length === 0 || times.some((t) => !TIME_24H_REGEX.test(t))) {
+    return { ok: false, field: 'times', message: en.medsScan.invalidTimesMessage };
+  }
+
+  if (input.scheduleKind === 'daily') {
+    const parsed = scheduleSchema.safeParse({ kind: 'daily', times });
+    if (!parsed.success) {
+      return { ok: false, field: 'times', message: en.medsScan.invalidTimesMessage };
+    }
+    return {
+      ok: true,
+      name,
+      strength,
+      doseText,
+      schedule: parsed.data,
+      instructions,
+    };
+  }
+
+  if (input.scheduleKind === 'weekly') {
+    const days = input.daysText
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    if (days.length === 0 || days.some((d) => !VALID_WEEKDAYS.has(d))) {
+      return { ok: false, field: 'days', message: en.medsScan.invalidDaysMessage };
+    }
+    const parsed = scheduleSchema.safeParse({ kind: 'weekly', days, times });
+    if (!parsed.success) {
+      return { ok: false, field: 'days', message: en.medsScan.invalidDaysMessage };
+    }
+    return {
+      ok: true,
+      name,
+      strength,
+      doseText,
+      schedule: parsed.data,
+      instructions,
+    };
+  }
+
+  const n = Number.parseInt(input.intervalText.trim(), 10);
+  if (!Number.isInteger(n) || n < 1 || String(n) !== input.intervalText.trim()) {
+    return { ok: false, field: 'interval', message: en.medsScan.invalidIntervalMessage };
+  }
+  const parsed = scheduleSchema.safeParse({ kind: 'every_n_days', n, times });
+  if (!parsed.success) {
+    return { ok: false, field: 'interval', message: en.medsScan.invalidIntervalMessage };
+  }
+  return {
+    ok: true,
+    name,
+    strength,
+    doseText,
+    schedule: parsed.data,
+    instructions,
+  };
 }
 
 export async function confirmAndSaveScannedMedication(
@@ -287,77 +396,58 @@ export async function confirmAndSaveScannedMedication(
     return { ok: false, errorCode: 'FORBIDDEN_ROLE' };
   }
 
-  const name = input.name.trim();
-  const doseText = input.doseText.trim();
-  const strength = input.strength?.trim() || null;
-  const instructions = input.instructions?.trim() || null;
-  const parsedSchedule = scheduleSchema.safeParse(input.schedule);
-
-  if (!name || !doseText || !parsedSchedule.success) {
-    return { ok: false, errorCode: 'VALIDATION_ERROR' };
-  }
-
+  const mocks = loadCareCircleMocks(deps.env);
   const supabase =
     deps.supabase ??
-    (getSupabaseClient() as unknown as RxStorageSupabaseLike & Pick<SupabaseClient, 'from'>);
-  const trackMedAdded = deps.trackMedAddedFromPhoto ?? defaultTrackMedAddedFromPhoto;
-  let savedMedication: Medication;
+    (mocks
+      ? undefined
+      : (getSupabaseClient() as unknown as RxStorageSupabaseLike & Pick<SupabaseClient, 'from'>));
 
-  try {
-    const res = await supabase
-      .from('medications')
-      .insert({
-        circle_id: input.circleId,
-        name,
-        strength,
-        dose_text: doseText,
-        schedule: parsedSchedule.data,
-        instructions,
-        active: true,
-        source: 'photo',
-      })
-      .select('*');
+  const addRes = await addMedication(
+    {
+      circleId: input.circleId,
+      name: input.name,
+      strength: input.strength,
+      doseText: input.doseText,
+      schedule: input.schedule,
+      instructions: input.instructions,
+      memberRole: input.memberRole,
+      source: 'photo',
+    },
+    {
+      ...deps,
+      ...(supabase ? { getClient: () => supabase as never } : {}),
+      ...(deps.trackMedAddedFromPhoto
+        ? { trackMedAdded: () => deps.trackMedAddedFromPhoto!() }
+        : {}),
+    },
+  );
 
-    if (res.error) {
-      return { ok: false, errorCode: 'SAVE_FAILED' };
+  if (!addRes.ok) {
+    if (addRes.errorCode === 'FORBIDDEN_ROLE') {
+      return { ok: false, errorCode: 'FORBIDDEN_ROLE' };
     }
-
-    const rows = Array.isArray(res.data) ? res.data : [];
-    if (rows.length === 0) {
-      return { ok: false, errorCode: 'SAVE_FAILED' };
+    if (addRes.errorCode === 'VALIDATION_ERROR') {
+      return { ok: false, errorCode: 'VALIDATION_ERROR' };
     }
-
-    const medication = medicationFromRow(medicationRowSchema.parse(rows[0]));
-    savedMedication = medication;
-  } catch {
     return { ok: false, errorCode: 'SAVE_FAILED' };
   }
 
-  // The medicine is saved from here on. Nothing below may turn this into "Not saved": the person
-  // would tap Save again and the circle would get the medicine (and every dose) twice.
-  try {
-    trackMedAdded();
-  } catch {
-    // Analytics never decides whether a medicine is saved.
-  }
-
   // Best-effort cleanup of the prescription photo after save; never block save if delete fails.
-  try {
-    await deletePrescriptionPhoto({
-      supabase,
-      imagePath: input.imagePath,
-    });
-  } catch {
-    // Leftover photos are removed within a day by cleanup-prescription-photos.
+  if (!mocks || deps.supabase) {
+    try {
+      await deletePrescriptionPhoto({
+        supabase:
+          supabase ??
+          (getSupabaseClient() as unknown as RxStorageSupabaseLike & Pick<SupabaseClient, 'from'>),
+        imagePath: input.imagePath,
+      });
+    } catch {
+      // Leftover photos are removed within a day by cleanup-prescription-photos.
+    }
   }
 
-  try {
-    await loadTodaySnapshot(deps);
-  } catch {
-    // Today reloads itself when it opens.
-  }
-
-  return { ok: true, medication: savedMedication };
+  return { ok: true, medication: addRes.medication };
 }
 
 export async function discardScannedMedication(
@@ -365,6 +455,10 @@ export async function discardScannedMedication(
   deps: ScanDeps = {},
 ): Promise<void> {
   if (!input.imagePath) return;
+  const mocks = loadCareCircleMocks(deps.env);
+  if (mocks && !deps.supabase) {
+    return;
+  }
   const supabase =
     deps.supabase ??
     (getSupabaseClient() as unknown as RxStorageSupabaseLike & Pick<SupabaseClient, 'from'>);
@@ -458,8 +552,6 @@ export function PrescriptionScanScreen({
   const [isScanning, setIsScanning] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const savingRef = useRef(false);
-  // The photo still in Storage for this screen, if any. Deleted when the screen closes without a
-  // save (Taha's decision: the photo goes once the medicine is saved, or the draft is dropped).
   const imagePathRef = useRef<string | null>(null);
   const depsRef = useRef(deps);
   depsRef.current = deps;
@@ -472,13 +564,19 @@ export function PrescriptionScanScreen({
   const [draft, setDraft] = useState<ExtractPrescriptionOutput | null>(null);
   const [errorCode, setErrorCode] = useState<ScanErrorCode | null>(null);
   const [saveFailed, setSaveFailed] = useState(false);
+  const [fieldValidationError, setFieldValidationError] = useState<string | null>(null);
   const [paywallVisible, setPaywallVisible] = useState(false);
 
   // Editable draft fields
   const [name, setName] = useState('');
   const [strength, setStrength] = useState('');
   const [doseText, setDoseText] = useState('');
+  const [scheduleKind, setScheduleKind] = useState<
+    'daily' | 'weekly' | 'every_n_days' | 'as_needed'
+  >('daily');
   const [timesText, setTimesText] = useState('08:00');
+  const [daysText, setDaysText] = useState('mon, thu');
+  const [intervalText, setIntervalText] = useState('2');
   const [instructions, setInstructions] = useState('');
 
   useEffect(() => {
@@ -507,8 +605,6 @@ export function PrescriptionScanScreen({
     setImagePath(path);
   }, []);
 
-  // Leaving the screen (back, sign-in, manual entry) with a photo still uploaded counts as a
-  // discard. Best effort: the daily clean-up removes anything this misses.
   useEffect(
     () => () => {
       const leftover = imagePathRef.current;
@@ -523,10 +619,18 @@ export function PrescriptionScanScreen({
     setName(extracted.name);
     setStrength(extracted.strength ?? '');
     setDoseText(extracted.doseText);
+    setScheduleKind(extracted.schedule.kind);
     setTimesText(
-      extracted.schedule.kind === 'as_needed' ? '' : extracted.schedule.times.join(', '),
+      extracted.schedule.kind === 'as_needed' ? '08:00' : extracted.schedule.times.join(', '),
+    );
+    setDaysText(
+      extracted.schedule.kind === 'weekly' ? extracted.schedule.days.join(', ') : 'mon, thu',
+    );
+    setIntervalText(
+      extracted.schedule.kind === 'every_n_days' ? String(extracted.schedule.n) : '2',
     );
     setInstructions(extracted.instructions ?? '');
+    setFieldValidationError(null);
   }, []);
 
   const runScanWithPhoto = useCallback(
@@ -534,9 +638,9 @@ export function PrescriptionScanScreen({
       setIsScanning(true);
       setErrorCode(null);
       setSaveFailed(false);
+      setFieldValidationError(null);
       setLastPhoto(photo);
 
-      // A new photo replaces the previous one: delete the previous one from Storage first.
       const previous = imagePathRef.current;
       if (!existingPath && previous) {
         rememberImagePath(null);
@@ -586,7 +690,6 @@ export function PrescriptionScanScreen({
             : await photoPicker.pickPhoto(options);
       } catch (error) {
         setErrorCode(
-          // Checked by message too: an Error subclass can lose its prototype once compiled.
           error instanceof PrescriptionPhotoPermissionError ||
             (error instanceof Error && error.message === 'PHOTO_PERMISSION_DENIED')
             ? 'PHOTO_PERMISSION_DENIED'
@@ -606,40 +709,45 @@ export function PrescriptionScanScreen({
     rememberImagePath(null);
     setErrorCode(null);
     setSaveFailed(false);
+    setFieldValidationError(null);
     await discardScannedMedication({ imagePath: pathToDelete }, deps);
   }, [deps, rememberImagePath]);
 
   const handleConfirmSave = useCallback(async () => {
     if (!draft || !imagePath || savingRef.current) return;
-    // One save at a time: a second tap while the first is in flight would add the medicine twice.
+
+    const validated = validateScannedDraftFields({
+      name,
+      strength,
+      doseText,
+      instructions,
+      scheduleKind,
+      timesText,
+      daysText,
+      intervalText,
+    });
+
+    if (!validated.ok) {
+      setFieldValidationError(validated.message);
+      setSaveFailed(false);
+      return;
+    }
+
+    setFieldValidationError(null);
     savingRef.current = true;
     setIsSaving(true);
     setSaveFailed(false);
-
-    const times = timesText
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-    let nextSchedule: MedicationSchedule = draft.schedule;
-    if (draft.schedule.kind === 'daily') {
-      nextSchedule = { kind: 'daily', times };
-    } else if (draft.schedule.kind === 'weekly') {
-      nextSchedule = { kind: 'weekly', days: draft.schedule.days, times };
-    } else if (draft.schedule.kind === 'every_n_days') {
-      nextSchedule = { kind: 'every_n_days', n: draft.schedule.n, times };
-    }
 
     const res = await confirmAndSaveScannedMedication(
       {
         circleId,
         memberRole,
         imagePath,
-        name,
-        strength: strength.trim() || null,
-        doseText,
-        schedule: nextSchedule,
-        instructions: instructions.trim() || null,
+        name: validated.name,
+        strength: validated.strength,
+        doseText: validated.doseText,
+        schedule: validated.schedule,
+        instructions: validated.instructions,
       },
       deps,
     );
@@ -653,30 +761,117 @@ export function PrescriptionScanScreen({
     }
 
     setDraft(null);
-    // Saved: confirmAndSaveScannedMedication already deleted the photo.
     rememberImagePath(null);
     onSaved?.(res.medication);
   }, [
     circleId,
+    daysText,
     deps,
     doseText,
     draft,
     imagePath,
     instructions,
+    intervalText,
     memberRole,
     name,
     onSaved,
     rememberImagePath,
+    scheduleKind,
     strength,
     timesText,
   ]);
 
   const canScan = contextStatus === 'ok' && (memberRole === 'owner' || memberRole === 'helper');
 
-  // A missing score counts as low: the prompt asks for a score on every field, so a missing one
-  // means the model did not say how sure it is, and the person must check that field.
+  // A missing score counts as 0 (< LOW_CONFIDENCE_THRESHOLD) so ConfirmDraft and the schedule
+  // block highlight any field the model did not score.
+  const scoreOrZero = (score?: number): number => (typeof score === 'number' ? score : 0);
   const isLowConfidence = (score?: number): boolean =>
-    typeof score !== 'number' || score < LOW_CONFIDENCE_THRESHOLD;
+    scoreOrZero(score) < LOW_CONFIDENCE_THRESHOLD;
+
+  const previewSchedule = useMemo((): MedicationSchedule => {
+    const times = timesText
+      .split(',')
+      .map((s) => s.trim())
+      .filter((t) => TIME_24H_REGEX.test(t));
+    const safeTimes = times.length > 0 ? times : ['08:00'];
+
+    if (scheduleKind === 'as_needed') {
+      return { kind: 'as_needed' };
+    }
+    if (scheduleKind === 'weekly') {
+      const days = daysText
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter((d): d is 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun' =>
+          VALID_WEEKDAYS.has(d),
+        );
+      return {
+        kind: 'weekly',
+        days: days.length > 0 ? days : ['mon'],
+        times: safeTimes,
+      };
+    }
+    if (scheduleKind === 'every_n_days') {
+      const parsedN = Number.parseInt(intervalText.trim(), 10);
+      return {
+        kind: 'every_n_days',
+        n: Number.isInteger(parsedN) && parsedN >= 1 ? parsedN : 1,
+        times: safeTimes,
+      };
+    }
+    return { kind: 'daily', times: safeTimes };
+  }, [daysText, intervalText, scheduleKind, timesText]);
+
+  const draftFields: DraftField[] = useMemo(() => {
+    if (!draft) return [];
+    return [
+      {
+        label: en.medsScan.nameLabel,
+        value: name,
+        confidence: scoreOrZero(draft.fieldConfidence.name),
+        testID: 'scan-draft-name-input',
+        lowConfidenceTestID: 'scan-low-confidence-name',
+        onChangeValue: (v) => {
+          setName(v);
+          setFieldValidationError(null);
+        },
+      },
+      {
+        label: en.medsScan.strengthLabel,
+        value: strength,
+        confidence: scoreOrZero(draft.fieldConfidence.strength),
+        testID: 'scan-draft-strength-input',
+        lowConfidenceTestID: 'scan-low-confidence-strength',
+        onChangeValue: (v) => {
+          setStrength(v);
+          setFieldValidationError(null);
+        },
+      },
+      {
+        label: en.medsScan.doseTextLabel,
+        value: doseText,
+        confidence: scoreOrZero(draft.fieldConfidence.doseText),
+        testID: 'scan-draft-dose-text-input',
+        lowConfidenceTestID: 'scan-low-confidence-doseText',
+        onChangeValue: (v) => {
+          setDoseText(v);
+          setFieldValidationError(null);
+        },
+      },
+      {
+        label: en.medsScan.instructionsLabel,
+        value: instructions,
+        confidence: scoreOrZero(draft.fieldConfidence.instructions),
+        testID: 'scan-draft-instructions-input',
+        lowConfidenceTestID: 'scan-low-confidence-instructions',
+        onChangeValue: (v) => {
+          setInstructions(v);
+          setFieldValidationError(null);
+        },
+      },
+    ];
+  }, [doseText, draft, instructions, name, strength]);
 
   return (
     <ScrollView
@@ -958,136 +1153,38 @@ export function PrescriptionScanScreen({
       ) : null}
 
       {draft ? (
-        <Card>
-          <View testID="scan-draft-review" style={{ gap: spacing.sm }}>
-            <Text
-              style={{
-                color: colors.textPrimary,
-                fontSize: typography.subtitle.fontSize,
-                lineHeight: typography.subtitle.lineHeight,
-                fontWeight: typography.subtitle.fontWeight,
-              }}
-            >
-              {en.medsScan.reviewHeading}
-            </Text>
-            <Text
-              style={{
-                color: colors.textSecondary,
-                fontSize: typography.body.fontSize,
-                lineHeight: typography.body.lineHeight,
-              }}
-            >
-              {en.medsScan.reviewSubheading}
-            </Text>
+        <View testID="scan-draft-review" style={{ gap: spacing.sm }}>
+          <Text
+            style={{
+              color: colors.textPrimary,
+              fontSize: typography.subtitle.fontSize,
+              lineHeight: typography.subtitle.lineHeight,
+              fontWeight: typography.subtitle.fontWeight,
+            }}
+          >
+            {en.medsScan.reviewHeading}
+          </Text>
+          <Text
+            style={{
+              color: colors.textSecondary,
+              fontSize: typography.body.fontSize,
+              lineHeight: typography.body.lineHeight,
+            }}
+          >
+            {en.medsScan.reviewSubheading}
+          </Text>
 
-            <View style={{ gap: spacing.xs }}>
-              <View style={styles.fieldHeader}>
-                <Text style={{ color: colors.textPrimary }}>{en.medsScan.nameLabel}</Text>
-                {isLowConfidence(draft.fieldConfidence.name) ? (
-                  <Text
-                    testID="scan-low-confidence-name"
-                    style={{
-                      color: colors.onWarningSurface,
-                      backgroundColor: colors.warningSurface,
-                    }}
-                  >
-                    {en.medsScan.lowConfidenceBadge}
-                  </Text>
-                ) : null}
-              </View>
-              <TextInput
-                testID="scan-draft-name-input"
-                accessibilityLabel={en.medsScan.nameLabel}
-                value={name}
-                onChangeText={setName}
-                style={[
-                  styles.input,
-                  {
-                    backgroundColor: isLowConfidence(draft.fieldConfidence.name)
-                      ? colors.warningSurface
-                      : colors.surface,
-                    borderColor: colors.border,
-                    borderRadius: radii.md,
-                    color: colors.textPrimary,
-                    paddingHorizontal: spacing.md,
-                    paddingVertical: spacing.sm,
-                  },
-                ]}
-              />
-            </View>
-
-            <View style={{ gap: spacing.xs }}>
-              <View style={styles.fieldHeader}>
-                <Text style={{ color: colors.textPrimary }}>{en.medsScan.strengthLabel}</Text>
-                {isLowConfidence(draft.fieldConfidence.strength) ? (
-                  <Text
-                    testID="scan-low-confidence-strength"
-                    style={{
-                      color: colors.onWarningSurface,
-                      backgroundColor: colors.warningSurface,
-                    }}
-                  >
-                    {en.medsScan.lowConfidenceBadge}
-                  </Text>
-                ) : null}
-              </View>
-              <TextInput
-                testID="scan-draft-strength-input"
-                accessibilityLabel={en.medsScan.strengthLabel}
-                value={strength}
-                onChangeText={setStrength}
-                style={[
-                  styles.input,
-                  {
-                    backgroundColor: isLowConfidence(draft.fieldConfidence.strength)
-                      ? colors.warningSurface
-                      : colors.surface,
-                    borderColor: colors.border,
-                    borderRadius: radii.md,
-                    color: colors.textPrimary,
-                    paddingHorizontal: spacing.md,
-                    paddingVertical: spacing.sm,
-                  },
-                ]}
-              />
-            </View>
-
-            <View style={{ gap: spacing.xs }}>
-              <View style={styles.fieldHeader}>
-                <Text style={{ color: colors.textPrimary }}>{en.medsScan.doseTextLabel}</Text>
-                {isLowConfidence(draft.fieldConfidence.doseText) ? (
-                  <Text
-                    testID="scan-low-confidence-doseText"
-                    style={{
-                      color: colors.onWarningSurface,
-                      backgroundColor: colors.warningSurface,
-                    }}
-                  >
-                    {en.medsScan.lowConfidenceBadge}
-                  </Text>
-                ) : null}
-              </View>
-              <TextInput
-                testID="scan-draft-dose-text-input"
-                accessibilityLabel={en.medsScan.doseTextLabel}
-                value={doseText}
-                onChangeText={setDoseText}
-                style={[
-                  styles.input,
-                  {
-                    backgroundColor: isLowConfidence(draft.fieldConfidence.doseText)
-                      ? colors.warningSurface
-                      : colors.surface,
-                    borderColor: colors.border,
-                    borderRadius: radii.md,
-                    color: colors.textPrimary,
-                    paddingHorizontal: spacing.md,
-                    paddingVertical: spacing.sm,
-                  },
-                ]}
-              />
-            </View>
-
+          <ConfirmDraft
+            key={imagePath ?? 'draft'}
+            fields={draftFields}
+            saveLabel={isSaving ? en.medsScan.savingCta : en.medsScan.saveCta}
+            lowConfidenceLabel={en.medsScan.lowConfidenceBadge}
+            saveTestID="scan-save-button"
+            disabled={isSaving}
+            onConfirm={() => {
+              void handleConfirmSave();
+            }}
+          >
             <View style={{ gap: spacing.xs }}>
               <View style={styles.fieldHeader}>
                 <Text style={{ color: colors.textPrimary }}>{en.medsScan.scheduleLabel}</Text>
@@ -1103,8 +1200,6 @@ export function PrescriptionScanScreen({
                   </Text>
                 ) : null}
               </View>
-              {/* The schedule kind, days and interval are saved as read: show them, so the person
-                  confirms what is saved. "As needed" in particular creates no reminders at all. */}
               <Text
                 testID="scan-draft-schedule-summary"
                 style={{
@@ -1114,69 +1209,120 @@ export function PrescriptionScanScreen({
                     : undefined,
                 }}
               >
-                {describeScheduleKind(draft.schedule)}
+                {describeScheduleKind(previewSchedule)}
               </Text>
-            </View>
 
-            {draft.schedule.kind !== 'as_needed' ? (
-              <View style={{ gap: spacing.xs }}>
-                <Text style={{ color: colors.textPrimary }}>{en.medsScan.timesLabel}</Text>
-                <TextInput
-                  testID="scan-draft-schedule-times-input"
-                  accessibilityLabel={en.medsScan.timesLabel}
-                  value={timesText}
-                  onChangeText={setTimesText}
-                  style={[
-                    styles.input,
-                    {
-                      backgroundColor: isLowConfidence(draft.fieldConfidence.schedule)
-                        ? colors.warningSurface
-                        : colors.surface,
-                      borderColor: colors.border,
-                      borderRadius: radii.md,
-                      color: colors.textPrimary,
-                      paddingHorizontal: spacing.md,
-                      paddingVertical: spacing.sm,
-                    },
-                  ]}
-                />
+              <View style={[styles.scheduleKindRow, { gap: spacing.xs }]}>
+                {(
+                  [
+                    ['daily', en.medsScan.scheduleKindDaily],
+                    ['weekly', en.medsScan.scheduleKindWeekly],
+                    ['every_n_days', en.medsScan.scheduleKindEveryNDays],
+                    ['as_needed', en.medsScan.scheduleKindAsNeeded],
+                  ] as const
+                ).map(([kind, label]) => (
+                  <View key={kind} testID={`scan-schedule-kind-${kind}`}>
+                    <Button
+                      variant={scheduleKind === kind ? 'primary' : 'secondary'}
+                      label={label}
+                      accessibilityLabel={label}
+                      onPress={() => {
+                        setScheduleKind(kind);
+                        setFieldValidationError(null);
+                      }}
+                    />
+                  </View>
+                ))}
               </View>
-            ) : null}
 
-            <View style={{ gap: spacing.xs }}>
-              <View style={styles.fieldHeader}>
-                <Text style={{ color: colors.textPrimary }}>{en.medsScan.instructionsLabel}</Text>
-                {isLowConfidence(draft.fieldConfidence.instructions) ? (
-                  <Text
-                    testID="scan-low-confidence-instructions"
-                    style={{
-                      color: colors.onWarningSurface,
-                      backgroundColor: colors.warningSurface,
+              {scheduleKind === 'weekly' ? (
+                <View style={{ gap: spacing.xs }}>
+                  <Text style={{ color: colors.textPrimary }}>{en.medsScan.daysLabel}</Text>
+                  <TextInput
+                    testID="scan-draft-schedule-days-input"
+                    accessibilityLabel={en.medsScan.daysLabel}
+                    value={daysText}
+                    onChangeText={(next) => {
+                      setDaysText(next);
+                      setFieldValidationError(null);
                     }}
-                  >
-                    {en.medsScan.lowConfidenceBadge}
-                  </Text>
-                ) : null}
-              </View>
-              <TextInput
-                testID="scan-draft-instructions-input"
-                accessibilityLabel={en.medsScan.instructionsLabel}
-                value={instructions}
-                onChangeText={setInstructions}
-                style={[
-                  styles.input,
-                  {
-                    backgroundColor: isLowConfidence(draft.fieldConfidence.instructions)
-                      ? colors.warningSurface
-                      : colors.surface,
-                    borderColor: colors.border,
-                    borderRadius: radii.md,
-                    color: colors.textPrimary,
-                    paddingHorizontal: spacing.md,
-                    paddingVertical: spacing.sm,
-                  },
-                ]}
-              />
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={[
+                      styles.input,
+                      {
+                        backgroundColor: isLowConfidence(draft.fieldConfidence.schedule)
+                          ? colors.warningSurface
+                          : colors.surface,
+                        borderColor: colors.border,
+                        borderRadius: radii.md,
+                        color: colors.textPrimary,
+                        paddingHorizontal: spacing.md,
+                        paddingVertical: spacing.sm,
+                      },
+                    ]}
+                  />
+                </View>
+              ) : null}
+
+              {scheduleKind === 'every_n_days' ? (
+                <View style={{ gap: spacing.xs }}>
+                  <Text style={{ color: colors.textPrimary }}>{en.medsScan.intervalLabel}</Text>
+                  <TextInput
+                    testID="scan-draft-schedule-interval-input"
+                    accessibilityLabel={en.medsScan.intervalLabel}
+                    value={intervalText}
+                    onChangeText={(next) => {
+                      setIntervalText(next);
+                      setFieldValidationError(null);
+                    }}
+                    keyboardType="number-pad"
+                    style={[
+                      styles.input,
+                      {
+                        backgroundColor: isLowConfidence(draft.fieldConfidence.schedule)
+                          ? colors.warningSurface
+                          : colors.surface,
+                        borderColor: colors.border,
+                        borderRadius: radii.md,
+                        color: colors.textPrimary,
+                        paddingHorizontal: spacing.md,
+                        paddingVertical: spacing.sm,
+                      },
+                    ]}
+                  />
+                </View>
+              ) : null}
+
+              {scheduleKind !== 'as_needed' ? (
+                <View style={{ gap: spacing.xs }}>
+                  <Text style={{ color: colors.textPrimary }}>{en.medsScan.timesLabel}</Text>
+                  <TextInput
+                    testID="scan-draft-schedule-times-input"
+                    accessibilityLabel={en.medsScan.timesLabel}
+                    value={timesText}
+                    onChangeText={(next) => {
+                      setTimesText(next);
+                      setFieldValidationError(null);
+                    }}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={[
+                      styles.input,
+                      {
+                        backgroundColor: isLowConfidence(draft.fieldConfidence.schedule)
+                          ? colors.warningSurface
+                          : colors.surface,
+                        borderColor: colors.border,
+                        borderRadius: radii.md,
+                        color: colors.textPrimary,
+                        paddingHorizontal: spacing.md,
+                        paddingVertical: spacing.sm,
+                      },
+                    ]}
+                  />
+                </View>
+              ) : null}
             </View>
 
             <Text
@@ -1190,31 +1336,32 @@ export function PrescriptionScanScreen({
               {`${en.medsScan.rawTextLabel}: ${draft.rawText}`}
             </Text>
 
-            <View style={[styles.captureRow, { gap: spacing.sm }]}>
-              <View testID="scan-save-button" style={styles.flexButton}>
-                <Button
-                  label={isSaving ? en.medsScan.savingCta : en.medsScan.saveCta}
-                  accessibilityLabel={en.medsScan.saveCta}
-                  disabled={isSaving}
-                  onPress={() => {
-                    void handleConfirmSave();
-                  }}
-                />
-              </View>
-              <View testID="scan-discard-button" style={styles.flexButton}>
-                <Button
-                  variant="secondary"
-                  disabled={isSaving}
-                  label={en.medsScan.discardCta}
-                  accessibilityLabel={en.medsScan.discardCta}
-                  onPress={() => {
-                    void handleDiscard();
-                  }}
-                />
-              </View>
-            </View>
+            {fieldValidationError ? (
+              <Text
+                testID="scan-field-validation-error"
+                style={{
+                  color: colors.danger,
+                  fontSize: typography.caption.fontSize,
+                  lineHeight: typography.caption.lineHeight,
+                }}
+              >
+                {fieldValidationError}
+              </Text>
+            ) : null}
+          </ConfirmDraft>
+
+          <View testID="scan-discard-button">
+            <Button
+              variant="secondary"
+              disabled={isSaving}
+              label={en.medsScan.discardCta}
+              accessibilityLabel={en.medsScan.discardCta}
+              onPress={() => {
+                void handleDiscard();
+              }}
+            />
           </View>
-        </Card>
+        </View>
       ) : null}
 
       <Text
@@ -1325,6 +1472,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  scheduleKindRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
   },
   input: {
     minHeight: MIN_TOUCH_TARGET_PT,
