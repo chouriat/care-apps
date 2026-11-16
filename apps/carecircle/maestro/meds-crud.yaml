@@ -1,0 +1,84 @@
+# CC-3b: Add, edit, and pause a medication on /(tabs)/meds.
+appId: app.carecircle.mobile
+env:
+  CAREGIVER_EMAIL: caregiver-meds@example.com
+  MAILPIT_URL: http://127.0.0.1:54324
+---
+- runScript: scripts/clear-mailpit.js
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: 'sign-in-screen'
+- tapOn:
+    id: 'sign-in-email-input'
+- inputText: ${CAREGIVER_EMAIL}
+- hideKeyboard
+- tapOn: '(?i).*magic link.*'
+- assertVisible:
+    id: 'sign-in-magic-link-sent'
+- retry:
+    maxRetries: 5
+    commands:
+      - runScript: scripts/magic-link-from-mailpit.js
+- openLink: ${output.callbackUrl}
+- assertVisible:
+    id: 'onboarding-start-screen'
+- tapOn:
+    id: 'onboarding-circle-name-input'
+- inputText: 'Meds Care Circle'
+- hideKeyboard
+- tapOn:
+    id: 'onboarding-recipient-name-input'
+- inputText: 'Evelyn'
+- hideKeyboard
+- tapOn:
+    id: 'onboarding-submit-button'
+- assertVisible:
+    id: 'today-empty-state'
+- openLink: 'carecircle://meds'
+- assertVisible:
+    id: 'meds-screen'
+- assertVisible:
+    id: 'meds-empty-state'
+# Add medication
+- tapOn:
+    id: 'meds-add-button'
+- assertVisible:
+    id: 'meds-form'
+- tapOn:
+    id: 'meds-name-input'
+- inputText: 'Metformin'
+- hideKeyboard
+- tapOn:
+    id: 'meds-strength-input'
+- inputText: '500 mg'
+- hideKeyboard
+- tapOn:
+    id: 'meds-dose-text-input'
+- inputText: '1 tablet'
+- hideKeyboard
+- tapOn:
+    id: 'meds-times-input'
+- eraseText
+- inputText: '08:00, 20:00'
+- hideKeyboard
+- tapOn:
+    id: 'meds-save-button'
+- assertVisible: 'Metformin (500 mg)'
+- assertVisible: '1 tablet'
+# Edit medication
+- tapOn: 'Edit'
+- assertVisible:
+    id: 'meds-form'
+- tapOn:
+    id: 'meds-dose-text-input'
+- eraseText
+- inputText: '2 tablets'
+- hideKeyboard
+- tapOn:
+    id: 'meds-save-button'
+- assertVisible: '2 tablets'
+# Pause medication
+- tapOn: 'Pause'
+- assertVisible:
+    id: 'meds-empty-state'
