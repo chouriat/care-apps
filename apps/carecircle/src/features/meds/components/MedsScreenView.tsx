@@ -51,6 +51,7 @@ export interface MedsScreenViewProps {
   isOffline?: boolean;
   notSavedNotice?: boolean;
   onRetry?: () => void;
+  onScanPrescription?: () => void;
   onSaveMedication?: (
     payload: ValidatedMedicationFormPayload,
     editingMedicationId: string | null,
@@ -158,6 +159,7 @@ export function MedsScreenView({
   isOffline = false,
   notSavedNotice = false,
   onRetry,
+  onScanPrescription,
   onSaveMedication,
   onPauseMedication,
 }: MedsScreenViewProps) {
@@ -311,12 +313,22 @@ export function MedsScreenView({
       ) : null}
 
       {!showStatusOnly && canEdit && !formOpen ? (
-        <View testID="meds-add-button">
-          <Button
-            label={en.meds.addCta}
-            accessibilityLabel={en.meds.addA11y}
-            onPress={openAddForm}
-          />
+        <View style={[styles.formActions, { gap: spacing.sm }]}>
+          <View testID="meds-add-button" style={styles.actionButton}>
+            <Button
+              label={en.meds.addCta}
+              accessibilityLabel={en.meds.addA11y}
+              onPress={openAddForm}
+            />
+          </View>
+          <View testID="meds-scan-button" style={styles.actionButton}>
+            <Button
+              variant="secondary"
+              label={en.meds.scanCta}
+              accessibilityLabel={en.meds.scanA11y}
+              onPress={() => onScanPrescription?.()}
+            />
+          </View>
         </View>
       ) : null}
 

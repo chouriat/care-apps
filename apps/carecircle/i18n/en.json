@@ -100,6 +100,8 @@
     "retry": "Try again",
     "addCta": "Add medication",
     "addA11y": "Add a new medication",
+    "scanCta": "Scan a prescription",
+    "scanA11y": "Scan a prescription photo",
     "editCta": "Edit",
     "pauseCta": "Pause",
     "saveCta": "Save medication",
@@ -130,6 +132,8 @@
     "validationError": "Please enter a medication name, dose text, and a valid schedule.",
     "notSavedTitle": "Not saved",
     "notSavedMessage": "Your medication change could not be saved. Please try again.",
+    "scheduleEveryNDaysSummary": "Every {n} days",
+    "adherenceSummary": "{given}/{total} given ({percent}%)",
     "adherenceAsNeeded": "As needed",
     "adherenceNoDoses": "No doses due in last 7 days"
   },

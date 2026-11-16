@@ -35,7 +35,7 @@ env:
     id: 'onboarding-submit-button'
 - assertVisible:
     id: 'today-empty-state'
-- openLink: 'carecircle://meds'
+- tapOn: 'Medications'
 - assertVisible:
     id: 'meds-screen'
 - assertVisible:

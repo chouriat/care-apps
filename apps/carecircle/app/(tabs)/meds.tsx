@@ -15,9 +15,16 @@ import {
 
 export interface MedsRouteProps {
   deps?: MedsDeps;
+  onScanPrescription?: () => void;
 }
 
-export default function MedsScreen({ deps }: MedsRouteProps = {}) {
+function defaultOpenScanScreen(): void {
+  void import('expo-router').then(({ router }) => {
+    router.push('/meds/scan' as never);
+  });
+}
+
+export default function MedsScreen({ deps, onScanPrescription }: MedsRouteProps = {}) {
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
   const [isOffline, setIsOffline] = useState(Boolean(deps?.isOffline));
@@ -147,6 +154,7 @@ export default function MedsScreen({ deps }: MedsRouteProps = {}) {
       onRetry={() => {
         void reload();
       }}
+      onScanPrescription={onScanPrescription ?? defaultOpenScanScreen}
       onSaveMedication={handleSaveMedication}
       onPauseMedication={handlePauseMedication}
     />
