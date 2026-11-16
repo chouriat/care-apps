@@ -163,7 +163,15 @@ export function CircleSettingsScreen({
 
       {!showStateOnly ? (
         <Card>
-          <View testID="circle-member-list" style={{ gap: spacing.md }}>
+          {/* On Android, a plain View is left out of the accessibility tree that Maestro and
+              screen readers read, and its children are lifted next to it. Marking the list as
+              important keeps the names and roles inside it, so `childOf: circle-member-list`
+              finds them. */}
+          <View
+            testID="circle-member-list"
+            importantForAccessibility="yes"
+            style={{ gap: spacing.md }}
+          >
             <Text
               style={{
                 color: colors.textPrimary,
