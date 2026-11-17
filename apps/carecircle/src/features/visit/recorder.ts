@@ -68,8 +68,10 @@ interface DynamicExpoAudioModule {
 }
 
 async function loadExpoAudioModule(): Promise<DynamicExpoAudioModule> {
-  const pkgName = 'expo-audio';
-  return (await import(pkgName)) as DynamicExpoAudioModule;
+  const g = globalThis as unknown as {
+    expo?: { modules?: { ExpoAudio?: DynamicExpoAudioModule['AudioModule'] } };
+  };
+  return { AudioModule: g.expo?.modules?.ExpoAudio };
 }
 
 const defaultRecorderModules: VisitAudioRecorderModules = {
