@@ -1,0 +1,90 @@
+# CC-6a: Create, edit, and delete an appointment on /(tabs)/calendar.
+appId: app.carecircle.mobile
+env:
+  CAREGIVER_EMAIL: caregiver-calendar@example.com
+  MAILPIT_URL: http://127.0.0.1:54324
+---
+- runScript: scripts/clear-mailpit.js
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: 'sign-in-screen'
+- tapOn:
+    id: 'sign-in-email-input'
+- inputText: ${CAREGIVER_EMAIL}
+- hideKeyboard
+- tapOn: '(?i).*magic link.*'
+- assertVisible:
+    id: 'sign-in-magic-link-sent'
+- retry:
+    maxRetries: 5
+    commands:
+      - runScript: scripts/magic-link-from-mailpit.js
+- openLink: ${output.callbackUrl}
+- assertVisible:
+    id: 'onboarding-start-screen'
+- tapOn:
+    id: 'onboarding-circle-name-input'
+- inputText: 'Calendar Care Circle'
+- hideKeyboard
+- tapOn:
+    id: 'onboarding-recipient-name-input'
+- inputText: 'Evelyn'
+- hideKeyboard
+- tapOn:
+    id: 'onboarding-submit-button'
+- assertVisible:
+    id: 'today-empty-state'
+- tapOn:
+    id: 'tab-calendar'
+- assertVisible:
+    id: 'calendar-screen'
+- assertVisible:
+    id: 'calendar-empty-state'
+# Create appointment
+- tapOn:
+    id: 'calendar-add-button'
+- assertVisible:
+    id: 'calendar-form'
+- tapOn:
+    id: 'calendar-title-input'
+- inputText: 'Cardiology check-up'
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: 'calendar-save-button'
+    direction: DOWN
+- tapOn:
+    id: 'calendar-save-button'
+- scrollUntilVisible:
+    element:
+      text: 'Cardiology check-up'
+    direction: DOWN
+- assertVisible: 'Cardiology check-up'
+# Edit appointment
+- tapOn: 'Edit'
+- scrollUntilVisible:
+    element:
+      id: 'calendar-title-input'
+    direction: UP
+- tapOn:
+    id: 'calendar-title-input'
+- eraseText
+- inputText: 'Cardiology follow-up'
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: 'calendar-save-button'
+    direction: DOWN
+- tapOn:
+    id: 'calendar-save-button'
+- scrollUntilVisible:
+    element:
+      text: 'Cardiology follow-up'
+    direction: DOWN
+- assertVisible: 'Cardiology follow-up'
+# Delete appointment (asks for confirmation)
+- tapOn: 'Delete'
+- tapOn: 'Confirm delete'
+- assertVisible:
+    id: 'calendar-empty-state'
