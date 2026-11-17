@@ -85,6 +85,11 @@ function setup(userId: string) {
         <Text>calendar</Text>
       </View>
     ),
+    '(tabs)/tasks': () => (
+      <View testID="tasks-stub">
+        <Text>tasks</Text>
+      </View>
+    ),
     'meds/scan': () => <MedsScanRoute />,
   };
   return { tables, routes };
@@ -136,7 +141,8 @@ describe('CC-3b follow-up: tab bar, scan button and the way back (PR #37 review)
     expect(within(screen.getByTestId('tab-today')).getByText(en.today.title)).toBeTruthy();
     expect(within(screen.getByTestId('tab-meds')).getByText(en.meds.title)).toBeTruthy();
     expect(within(screen.getByTestId('tab-calendar')).getByText(en.calendar.title)).toBeTruthy();
-    expect(screen.queryAllByTestId(/^tab-/)).toHaveLength(3);
+    expect(within(screen.getByTestId('tab-tasks')).getByText(en.tasks.title)).toBeTruthy();
+    expect(screen.queryAllByTestId(/^tab-/)).toHaveLength(4);
 
     await fireEvent.press(screen.getByTestId('tab-meds'));
     await waitFor(() => expect(screen.getByTestId('meds-screen')).toBeTruthy());

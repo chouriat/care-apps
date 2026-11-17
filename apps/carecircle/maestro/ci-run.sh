@@ -75,7 +75,8 @@ if maestro test apps/carecircle/maestro/sign-in-magic-link.yaml && \
    maestro test apps/carecircle/maestro/meds-crud.yaml && \
    maestro test apps/carecircle/maestro/scan-confirm.yaml && \
    maestro test apps/carecircle/maestro/visit-note-typed.yaml && \
-   maestro test apps/carecircle/maestro/appointments-crud.yaml; then
+   maestro test apps/carecircle/maestro/appointments-crud.yaml && \
+   maestro test apps/carecircle/maestro/tasks-crud.yaml; then
   exit 0
 fi
 echo "::group::App log (ReactNativeJS, crashes)"

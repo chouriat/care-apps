@@ -1,0 +1,76 @@
+# CC-6b: Add, assign, and complete a shared task on /(tabs)/tasks.
+appId: app.carecircle.mobile
+env:
+  CAREGIVER_EMAIL: caregiver-tasks@example.com
+  MAILPIT_URL: http://127.0.0.1:54324
+---
+- runScript: scripts/clear-mailpit.js
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: 'sign-in-screen'
+- tapOn:
+    id: 'sign-in-email-input'
+- inputText: ${CAREGIVER_EMAIL}
+- hideKeyboard
+- tapOn: '(?i).*magic link.*'
+- assertVisible:
+    id: 'sign-in-magic-link-sent'
+- retry:
+    maxRetries: 5
+    commands:
+      - runScript: scripts/magic-link-from-mailpit.js
+- openLink: ${output.callbackUrl}
+- assertVisible:
+    id: 'onboarding-start-screen'
+- tapOn:
+    id: 'onboarding-circle-name-input'
+- inputText: 'Tasks Care Circle'
+- hideKeyboard
+- tapOn:
+    id: 'onboarding-recipient-name-input'
+- inputText: 'Evelyn'
+- hideKeyboard
+- tapOn:
+    id: 'onboarding-submit-button'
+- assertVisible:
+    id: 'today-empty-state'
+- tapOn:
+    id: 'tab-tasks'
+- assertVisible:
+    id: 'tasks-screen'
+- assertVisible:
+    id: 'tasks-empty-state'
+# Add and assign task
+- tapOn:
+    id: 'tasks-add-button'
+- assertVisible:
+    id: 'tasks-form'
+- tapOn:
+    id: 'tasks-title-input'
+- inputText: 'Pick up pharmacy refill'
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: 'tasks-assignee-option-member-0'
+    direction: DOWN
+- tapOn:
+    id: 'tasks-assignee-option-member-0'
+- scrollUntilVisible:
+    element:
+      id: 'tasks-save-button'
+    direction: DOWN
+- tapOn:
+    id: 'tasks-save-button'
+- scrollUntilVisible:
+    element:
+      text: 'Pick up pharmacy refill'
+    direction: DOWN
+- assertVisible: 'Pick up pharmacy refill'
+- assertVisible:
+    id: 'tasks-open-section'
+# Complete task
+- tapOn: 'Complete'
+- assertVisible:
+    id: 'tasks-done-section'
+- assertVisible: 'Reopen'
