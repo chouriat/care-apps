@@ -1,8 +1,11 @@
 import { Buffer } from 'node:buffer';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+
+const { fetch } = globalThis;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -49,6 +52,7 @@ export function evaluateLabelDataset(dataset) {
     doseText: { matched: 0, total: 0 },
     schedule: { matched: 0, total: 0 },
   };
+  const missedLabels = [];
 
   for (const item of dataset.labels) {
     // Privacy check: labelText and rawText must never contain unblurred email addresses or phone numbers.
@@ -58,6 +62,7 @@ export function evaluateLabelDataset(dataset) {
 
     const expected = item.expected;
     const confirmed = item.confirmed ?? item.extracted;
+    const missedFields = [];
 
     for (const field of ['name', 'strength', 'doseText', 'schedule']) {
       totalFields += 1;
@@ -65,7 +70,13 @@ export function evaluateLabelDataset(dataset) {
       if (deepEqual(expected[field], confirmed?.[field])) {
         matchingFields += 1;
         fieldCounts[field].matched += 1;
+      } else {
+        missedFields.push(field);
       }
+    }
+
+    if (missedFields.length > 0) {
+      missedLabels.push({ id: item.id, missedFields });
     }
   }
 
@@ -76,14 +87,132 @@ export function evaluateLabelDataset(dataset) {
     matchingFields,
     accuracy,
     fieldCounts,
+    missedLabels,
     passed: accuracy >= TARGET_ACCURACY,
   };
 }
 
-function runCli() {
+async function signInEvalAccount(supabaseUrl, anonKey, email, password) {
+  const res = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: {
+      apikey: anonKey,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) {
+    throw new Error(`Eval sign-in failed with HTTP ${res.status}`);
+  }
+  const body = await res.json();
+  if (typeof body?.access_token !== 'string') {
+    throw new Error('Eval sign-in did not return an access_token');
+  }
+  return body.access_token;
+}
+
+async function getOrCreateEvalCircle(supabaseUrl, anonKey, accessToken) {
+  const listRes = await fetch(`${supabaseUrl}/rest/v1/circles?select=id&limit=1`, {
+    headers: {
+      apikey: anonKey,
+      authorization: `Bearer ${accessToken}`,
+    },
+  });
+  if (!listRes.ok) {
+    throw new Error(`Failed to list circles: HTTP ${listRes.status}`);
+  }
+  const rows = await listRes.json();
+  if (Array.isArray(rows) && typeof rows[0]?.id === 'string') {
+    return rows[0].id.toLowerCase();
+  }
+
+  const createRes = await fetch(`${supabaseUrl}/rest/v1/rpc/create_circle`, {
+    method: 'POST',
+    headers: {
+      apikey: anonKey,
+      authorization: `Bearer ${accessToken}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      name: 'Eval circle',
+      careRecipientName: 'Eval Recipient',
+      timezone: 'Europe/Paris',
+    }),
+  });
+  if (!createRes.ok) {
+    throw new Error(`create_circle failed with HTTP ${createRes.status}`);
+  }
+  const created = await createRes.json();
+  if (typeof created?.id !== 'string') {
+    throw new Error('create_circle did not return a circle id');
+  }
+  return created.id.toLowerCase();
+}
+
+async function extractLabelViaGateway({ supabaseUrl, anonKey, accessToken, circleId, bytes }) {
+  const photoId = crypto.randomUUID().toLowerCase();
+  const imagePath = `${circleId}/${photoId}.jpg`;
+  const authHeaders = {
+    apikey: anonKey,
+    authorization: `Bearer ${accessToken}`,
+  };
+
+  const uploadRes = await fetch(
+    `${supabaseUrl}/storage/v1/object/prescription-photos/${imagePath}`,
+    {
+      method: 'POST',
+      headers: {
+        ...authHeaders,
+        'content-type': 'image/jpeg',
+        'x-upsert': 'false',
+      },
+      body: bytes,
+    },
+  );
+  if (!uploadRes.ok) {
+    throw new Error(`Storage upload failed for ${imagePath}: HTTP ${uploadRes.status}`);
+  }
+
+  try {
+    const aiRes = await fetch(`${supabaseUrl}/functions/v1/ai`, {
+      method: 'POST',
+      headers: {
+        ...authHeaders,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        requestId: crypto.randomUUID().toLowerCase(),
+        task: 'carecircle.extractPrescription',
+        input: { imagePath },
+      }),
+    });
+    const body = await aiRes.json().catch(() => null);
+    if (!aiRes.ok || !body?.ok) {
+      throw new Error(
+        `AI gateway extractPrescription failed (${aiRes.status}): ${body?.error?.code ?? 'UNKNOWN'}`,
+      );
+    }
+    return {
+      output: body.output,
+      model: typeof body.model === 'string' ? body.model : 'live-gateway',
+    };
+  } finally {
+    await fetch(`${supabaseUrl}/storage/v1/object/prescription-photos`, {
+      method: 'DELETE',
+      headers: {
+        ...authHeaders,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ prefixes: [imagePath] }),
+    }).catch(() => undefined);
+  }
+}
+
+async function runCli() {
   const raw = fs.readFileSync(EXPECTED_PATH, 'utf8');
   const dataset = JSON.parse(raw);
   const files = [];
+  const bytesByFile = new Map();
 
   // Verify all 20 JPEG files exist and have a valid JPEG header (FF D8 FF) and size <= 2 MB.
   for (const item of dataset.labels) {
@@ -98,7 +227,9 @@ function runCli() {
     if (bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) {
       throw new Error(`Label image ${item.file} does not start with JPEG header FF D8 FF`);
     }
-    files.push({ file: item.file, bytes: Buffer.from(bytes) });
+    const buf = Buffer.from(bytes);
+    files.push({ file: item.file, bytes: buf });
+    bytesByFile.set(item.file, buf);
   }
 
   const placeholders = findPlaceholderPhotos(files);
@@ -111,8 +242,31 @@ function runCli() {
     process.exit(1);
   }
 
-  // Until the gateway runner exists, `extracted` is a hand-written answer, not an AI reading.
-  if (dataset.labels.some((item) => item.extracted && !item.extractedBy)) {
+  const email = process.env.CARECIRCLE_EVAL_EMAIL?.trim();
+  const password = process.env.CARECIRCLE_EVAL_PASSWORD?.trim();
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim().replace(/\/+$/, '');
+  const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim();
+
+  if (email && password && supabaseUrl && anonKey) {
+    const accessToken = await signInEvalAccount(supabaseUrl, anonKey, email, password);
+    const circleId = await getOrCreateEvalCircle(supabaseUrl, anonKey, accessToken);
+    for (const item of dataset.labels) {
+      const bytes = bytesByFile.get(item.file);
+      const reading = await extractLabelViaGateway({
+        supabaseUrl,
+        anonKey,
+        accessToken,
+        circleId,
+        bytes,
+      });
+      item.extracted = reading.output;
+      item.extractedBy = reading.model;
+      delete item.confirmed;
+    }
+  }
+
+  // Until the gateway runner has populated extractedBy, `extracted` is a hand-written answer, not an AI reading.
+  if (dataset.labels.some((item) => !item.extracted || !item.extractedBy)) {
     process.stderr.write(
       'NOT RUN: expected.json has hand-written "extracted" answers. The eval must send each photo ' +
         'through carecircle.extractPrescription and score that reading, not a copy of the answer.\n',
@@ -128,6 +282,13 @@ function runCli() {
   for (const [field, counts] of Object.entries(summary.fieldCounts)) {
     process.stdout.write(`  - ${field}: ${counts.matched}/${counts.total}\n`);
   }
+  if (summary.missedLabels.length > 0) {
+    process.stdout.write(
+      `Missed labels: ${summary.missedLabels.map((m) => `${m.id} (${m.missedFields.join(', ')})`).join('; ')}\n`,
+    );
+  } else {
+    process.stdout.write('Missed labels: none\n');
+  }
 
   if (!summary.passed) {
     process.stderr.write(`FAIL: accuracy ${pct}% is below required 90.0%\n`);
@@ -136,5 +297,8 @@ function runCli() {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  runCli();
+  runCli().catch((err) => {
+    process.stderr.write(`NOT RUN: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  });
 }
