@@ -9,6 +9,9 @@ const VALID_PHOTO_NAME_REGEX =
 const VALID_VISIT_AUDIO_NAME_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.m4a$/;
 
+const VALID_LOG_EXPORT_NAME_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.pdf$/;
+
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {
     status,
@@ -138,6 +141,48 @@ export function createCleanupVisitAudioHandler(deps: CleanupPrescriptionPhotosDe
   };
 }
 
+export function createCleanupLogExportsHandler(deps: CleanupPrescriptionPhotosDeps = {}) {
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const getEnv = deps.getEnv ?? ((key: string) => Deno.env.get(key));
+
+  return async (req: Request): Promise<Response> => {
+    if (req.method.toUpperCase() !== 'POST') {
+      return json({ ok: false, error: 'Method not allowed' }, 405);
+    }
+
+    const serviceKey = (getEnv('SUPABASE_SERVICE_ROLE_KEY') ?? '').trim();
+    const bearerToken = extractBearerToken(req.headers.get('authorization'));
+    if (!serviceKey || !bearerToken || !constantTimeEquals(bearerToken, serviceKey)) {
+      return json({ ok: false, error: 'Unauthorized' }, 401);
+    }
+
+    const supabaseUrl = (getEnv('SUPABASE_URL') ?? '').trim().replace(/\/+$/, '');
+    if (!supabaseUrl) {
+      return json({ ok: false, error: 'Missing SUPABASE_URL' }, 500);
+    }
+
+    const authHeaders = {
+      authorization: `Bearer ${serviceKey}`,
+      apikey: serviceKey,
+      'content-type': 'application/json',
+    };
+
+    const result = await cleanupBucket({
+      fetchImpl,
+      supabaseUrl,
+      authHeaders,
+      rpcName: 'list_expired_log_exports',
+      bucketId: 'log-exports',
+      validNameRegex: VALID_LOG_EXPORT_NAME_REGEX,
+      label: 'log exports',
+    });
+    if (!result.ok) {
+      return json({ ok: false, error: result.error }, 502);
+    }
+    return json({ ok: true, deleted: result.deleted }, 200);
+  };
+}
+
 export function createCleanupPrescriptionPhotosHandler(deps: CleanupPrescriptionPhotosDeps = {}) {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const getEnv = deps.getEnv ?? ((key: string) => Deno.env.get(key));
@@ -159,14 +204,22 @@ export function createCleanupPrescriptionPhotosHandler(deps: CleanupPrescription
     }
 
     let includeVisitAudio = false;
+    let includeLogExports = false;
     let visitAudioOnly = false;
+    let logExportsOnly = false;
     try {
       const rawBody = await req.text();
       if (rawBody.trim().length > 0) {
-        const parsed = JSON.parse(rawBody) as { includeVisitAudio?: unknown; bucket?: unknown };
+        const parsed = JSON.parse(rawBody) as {
+          includeVisitAudio?: unknown;
+          includeLogExports?: unknown;
+          bucket?: unknown;
+        };
         if (parsed && typeof parsed === 'object') {
           if (parsed.includeVisitAudio === true) includeVisitAudio = true;
+          if (parsed.includeLogExports === true) includeLogExports = true;
           if (parsed.bucket === 'visit-audio') visitAudioOnly = true;
+          if (parsed.bucket === 'log-exports') logExportsOnly = true;
         }
       }
     } catch {
@@ -193,6 +246,20 @@ export function createCleanupPrescriptionPhotosHandler(deps: CleanupPrescription
       return json({ ok: true, deleted: audioRes.deleted }, 200);
     }
 
+    if (logExportsOnly) {
+      const exportRes = await cleanupBucket({
+        fetchImpl,
+        supabaseUrl,
+        authHeaders,
+        rpcName: 'list_expired_log_exports',
+        bucketId: 'log-exports',
+        validNameRegex: VALID_LOG_EXPORT_NAME_REGEX,
+        label: 'log exports',
+      });
+      if (!exportRes.ok) return json({ ok: false, error: exportRes.error }, 502);
+      return json({ ok: true, deleted: exportRes.deleted }, 200);
+    }
+
     const photoRes = await cleanupBucket({
       fetchImpl,
       supabaseUrl,
@@ -206,29 +273,51 @@ export function createCleanupPrescriptionPhotosHandler(deps: CleanupPrescription
       return json({ ok: false, error: photoRes.error }, 502);
     }
 
-    if (!includeVisitAudio) {
+    if (!includeVisitAudio && !includeLogExports) {
       return json({ ok: true, deleted: photoRes.deleted }, 200);
     }
 
-    const audioRes = await cleanupBucket({
-      fetchImpl,
-      supabaseUrl,
-      authHeaders,
-      rpcName: 'list_expired_visit_audio',
-      bucketId: 'visit-audio',
-      validNameRegex: VALID_VISIT_AUDIO_NAME_REGEX,
-      label: 'visit audio',
-    });
-    if (!audioRes.ok) {
-      return json({ ok: false, error: audioRes.error }, 502);
+    let deletedVisitAudio = 0;
+    if (includeVisitAudio) {
+      const audioRes = await cleanupBucket({
+        fetchImpl,
+        supabaseUrl,
+        authHeaders,
+        rpcName: 'list_expired_visit_audio',
+        bucketId: 'visit-audio',
+        validNameRegex: VALID_VISIT_AUDIO_NAME_REGEX,
+        label: 'visit audio',
+      });
+      if (!audioRes.ok) {
+        return json({ ok: false, error: audioRes.error }, 502);
+      }
+      deletedVisitAudio = audioRes.deleted;
+    }
+
+    let deletedLogExports = 0;
+    if (includeLogExports) {
+      const exportRes = await cleanupBucket({
+        fetchImpl,
+        supabaseUrl,
+        authHeaders,
+        rpcName: 'list_expired_log_exports',
+        bucketId: 'log-exports',
+        validNameRegex: VALID_LOG_EXPORT_NAME_REGEX,
+        label: 'log exports',
+      });
+      if (!exportRes.ok) {
+        return json({ ok: false, error: exportRes.error }, 502);
+      }
+      deletedLogExports = exportRes.deleted;
     }
 
     return json(
       {
         ok: true,
-        deleted: photoRes.deleted + audioRes.deleted,
+        deleted: photoRes.deleted + deletedVisitAudio + deletedLogExports,
         deletedPhotos: photoRes.deleted,
-        deletedVisitAudio: audioRes.deleted,
+        ...(includeVisitAudio ? { deletedVisitAudio } : {}),
+        ...(includeLogExports ? { deletedLogExports } : {}),
       },
       200,
     );

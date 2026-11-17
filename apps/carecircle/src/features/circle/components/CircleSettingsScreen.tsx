@@ -28,6 +28,7 @@ export interface CircleSettingsScreenProps {
   onChangeMemberRole?: (userId: string, nextRole: InviteAssignableRole) => void | Promise<void>;
   onRemoveMember?: (userId: string) => void | Promise<void>;
   onShowPaywall?: () => void;
+  onOpenCareLog?: () => void;
   onRetry?: () => void;
 }
 
@@ -52,6 +53,7 @@ export function CircleSettingsScreen({
   onChangeMemberRole,
   onRemoveMember,
   onShowPaywall,
+  onOpenCareLog,
   onRetry,
 }: CircleSettingsScreenProps) {
   const { colors, radii, spacing, typography } = useTheme();
@@ -357,6 +359,30 @@ export function CircleSettingsScreen({
                 </View>
               </View>
             ) : null}
+          </View>
+        </Card>
+      ) : null}
+
+      {!showStateOnly ? (
+        <Card>
+          <View style={{ gap: spacing.xs }}>
+            <Text
+              style={{
+                color: colors.textSecondary,
+                fontSize: typography.caption.fontSize,
+                lineHeight: typography.caption.lineHeight,
+              }}
+            >
+              {en.circle.careLogSubtitle}
+            </Text>
+            <View testID="circle-care-log-button">
+              <Button
+                variant="secondary"
+                label={en.circle.careLogLabel}
+                accessibilityLabel={en.circle.careLogLabel}
+                onPress={() => onOpenCareLog?.()}
+              />
+            </View>
           </View>
         </Card>
       ) : null}
