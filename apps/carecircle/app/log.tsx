@@ -5,7 +5,6 @@ import en from '../i18n/en.json';
 import {
   CARE_LOG_PAGE_SIZE,
   CareLogScreenView,
-  defaultTrackPaywallViewed,
   exportCareLogPdf,
   fetchCareLogPage,
   loadCareLogContext,
@@ -133,11 +132,12 @@ export default function CareLogRoute({ deps }: CareLogRouteProps = {}) {
   ]);
 
   const openPaywall = useCallback(() => {
-    const trackPaywall = depsRef.current?.trackPaywallViewed ?? defaultTrackPaywallViewed;
-    try {
-      trackPaywall();
-    } catch {
-      // Analytics never blocks UI.
+    if (depsRef.current?.trackPaywallViewed) {
+      try {
+        depsRef.current.trackPaywallViewed();
+      } catch {
+        // Analytics never blocks UI.
+      }
     }
     setPaywallVisible(true);
   }, []);
@@ -209,7 +209,11 @@ export default function CareLogRoute({ deps }: CareLogRouteProps = {}) {
         isExporting={isExporting}
         exportError={exportError}
       />
-      <PaywallSheet visible={paywallVisible} onClose={() => setPaywallVisible(false)} />
+      <PaywallSheet
+        visible={paywallVisible}
+        trigger="pdf_export"
+        onClose={() => setPaywallVisible(false)}
+      />
     </View>
   );
 }

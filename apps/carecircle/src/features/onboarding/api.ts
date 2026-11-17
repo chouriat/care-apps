@@ -51,6 +51,7 @@ export type CreateCircleErrorCode =
   | 'VALIDATION_ERROR'
   | 'NETWORK_ERROR'
   | 'CIRCLE_LIMIT_REACHED'
+  | 'CIRCLE_LIMIT'
   | 'CREATE_CIRCLE_FAILED';
 
 export type CreateCircleResult =
@@ -145,6 +146,13 @@ export async function createCircleViaRpc(
       return {
         ok: false,
         errorCode: 'CIRCLE_LIMIT_REACHED',
+        isOffline: false,
+      };
+    }
+    if (/\bCIRCLE_LIMIT\b/.test(rpcError.message ?? '')) {
+      return {
+        ok: false,
+        errorCode: 'CIRCLE_LIMIT',
         isOffline: false,
       };
     }

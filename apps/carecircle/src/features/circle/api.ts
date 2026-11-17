@@ -25,6 +25,7 @@ export type AcceptInviteErrorCode =
   | 'INVITE_EXPIRED'
   | 'INVITE_USED'
   | 'CIRCLE_FULL'
+  | 'CIRCLE_LIMIT'
   | 'CIRCLE_LIMIT_REACHED'
   | 'PERMISSION_DENIED'
   | 'NETWORK_ERROR'
@@ -252,7 +253,41 @@ export async function acceptInviteViaRpc(
   const trackInviteAccepted = deps.trackInviteAccepted ?? defaultTrackInviteAccepted;
 
   try {
-    const client = getClient();
+    const client = getClient() as {
+      rpc: (
+        fn: string,
+        args: Record<string, unknown>,
+      ) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }>;
+      from?: (table: string) => {
+        select?: (cols: string) => PromiseLike<{ data?: unknown; error?: unknown }>;
+      };
+    };
+
+    // Check which circles the signed-in user already belongs to before calling accept_invite so
+    // people who were already in the circle are not counted in cc_invite_accepted.
+    const alreadyInCircles = new Set<string>();
+    try {
+      const selectRes = client.from?.('circle_members')?.select?.('circle_id') as
+        | { limit?: (n: number) => PromiseLike<{ data?: unknown }> }
+        | PromiseLike<{ data?: unknown }>
+        | undefined;
+      const existingRes =
+        selectRes && typeof (selectRes as { limit?: unknown }).limit === 'function'
+          ? await (selectRes as { limit: (n: number) => PromiseLike<{ data?: unknown }> }).limit(
+              500,
+            )
+          : await (selectRes as PromiseLike<{ data?: unknown }> | undefined);
+      if (Array.isArray(existingRes?.data)) {
+        for (const row of existingRes.data as Array<{ circle_id?: unknown }>) {
+          if (typeof row?.circle_id === 'string' && row.circle_id.trim()) {
+            alreadyInCircles.add(row.circle_id.trim());
+          }
+        }
+      }
+    } catch {
+      // Ignore if client stub in unit tests does not implement from('circle_members').
+    }
+
     const { data, error } = await client.rpc('accept_invite', { token });
 
     if (error) {
@@ -277,6 +312,9 @@ export async function acceptInviteViaRpc(
       if (error.message.includes('CIRCLE_LIMIT_REACHED')) {
         return { ok: false, errorCode: 'CIRCLE_LIMIT_REACHED', isOffline: false };
       }
+      if (error.message.includes('CIRCLE_LIMIT')) {
+        return { ok: false, errorCode: 'CIRCLE_LIMIT', isOffline: false };
+      }
       return { ok: false, errorCode: 'ACCEPT_INVITE_FAILED', isOffline: false };
     }
 
@@ -293,7 +331,12 @@ export async function acceptInviteViaRpc(
     const role: InviteAssignableRole | undefined =
       rawRole === 'helper' || rawRole === 'viewer' ? rawRole : undefined;
 
-    safeTrack(() => trackInviteAccepted(role));
+    const wasAlreadyMember =
+      rawRole === 'owner' || record.alreadyMember === true || alreadyInCircles.has(circleId);
+
+    if (!wasAlreadyMember && role) {
+      safeTrack(() => trackInviteAccepted(role));
+    }
 
     return {
       ok: true,
@@ -517,6 +560,7 @@ export interface CircleSettingsDeps {
   getClient?: () => Pick<SupabaseClient, 'from' | 'rpc'>;
   getUserId?: () => Promise<string | null>;
   env?: Record<string, string | undefined>;
+  planName?: 'free' | 'family';
 }
 
 export type LoadCircleSettingsResult =
@@ -526,6 +570,7 @@ export type LoadCircleSettingsResult =
       circleName: string;
       currentUserId: string;
       currentUserRole: MemberRole;
+      planName: 'free' | 'family';
       members: CircleMemberItem[];
     }
   | {
@@ -545,6 +590,7 @@ export async function loadCircleSettings(
       circleName: mocks.circle.name,
       currentUserId: ownerId,
       currentUserRole: 'owner',
+      planName: deps.planName ?? 'free',
       members: [
         {
           circleId: mocks.circle.id,
@@ -628,12 +674,39 @@ export async function loadCircleSettings(
       };
     });
 
+    let planName: 'free' | 'family' = deps.planName ?? 'free';
+    if (deps.planName === undefined) {
+      const ownerMember = members.find((m) => m.role === 'owner');
+      if (ownerMember?.userId) {
+        try {
+          const entRes = await client
+            .from('entitlements')
+            .select('user_id, entitlement, active, expires_at')
+            .eq('user_id', ownerMember.userId)
+            .eq('entitlement', 'carecircle_family')
+            .limit(1);
+          const ent = Array.isArray(entRes.data)
+            ? (entRes.data[0] as { active?: boolean; expires_at?: string | null } | undefined)
+            : undefined;
+          if (ent?.active === true) {
+            const expMs = ent.expires_at ? Date.parse(ent.expires_at) : Number.POSITIVE_INFINITY;
+            if (!Number.isNaN(expMs) && expMs > Date.now()) {
+              planName = 'family';
+            }
+          }
+        } catch {
+          planName = 'free';
+        }
+      }
+    }
+
     return {
       ok: true,
       circleId: circle.id,
       circleName: circle.name,
       currentUserId: userId ?? '',
       currentUserRole: roleRes.role,
+      planName,
       members,
     };
   } catch (err) {

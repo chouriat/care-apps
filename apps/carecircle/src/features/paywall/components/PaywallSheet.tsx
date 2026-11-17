@@ -1,8 +1,13 @@
 import { Button, Card, ErrorState, MIN_TOUCH_TARGET_PT, Sheet, useTheme } from '@carecircle/ui';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import en from '../../../../i18n/en.json';
-import { openPaywallLegalLink } from '../api';
+import {
+  getFamilyOffer,
+  openPaywallLegalLink,
+  trackPaywallViewed,
+  type PaywallTrigger,
+} from '../api';
 
 // Apple App Store Review Guideline 3.1.2(c) (Auto-Renewable Subscriptions):
 // subscription paywalls must clearly display the billed price and billing period (`priceText`,
@@ -12,6 +17,8 @@ import { openPaywallLegalLink } from '../api';
 export interface PaywallSheetProps {
   visible: boolean;
   onClose: () => void;
+  trigger?: PaywallTrigger;
+  limitMessage?: string | null;
   onPurchase?: () => void | Promise<boolean | void>;
   onRestorePurchases?: () => void | Promise<boolean | void>;
   onRetry?: () => void;
@@ -25,9 +32,26 @@ export interface PaywallSheetProps {
   onOpenPrivacy?: () => void;
 }
 
+export function defaultLimitMessageForTrigger(trigger?: PaywallTrigger): string | null {
+  switch (trigger) {
+    case 'members':
+      return en.paywall.limitMembers;
+    case 'visit_note':
+      return en.paywall.limitVisitNote;
+    case 'pdf_export':
+      return en.paywall.limitPdfExport;
+    case 'circles':
+      return en.paywall.limitCircles;
+    default:
+      return null;
+  }
+}
+
 export function PaywallSheet({
   visible,
   onClose,
+  trigger,
+  limitMessage,
   onPurchase,
   onRestorePurchases,
   onRetry,
@@ -36,13 +60,58 @@ export function PaywallSheet({
   hasError = false,
   isActive = false,
   priceText,
-  hasIntroOffer = false,
+  hasIntroOffer,
   onOpenTerms,
   onOpenPrivacy,
 }: PaywallSheetProps) {
   const { colors, spacing, typography } = useTheme();
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const wasVisibleRef = useRef(false);
+
+  const [fetchedOffer, setFetchedOffer] = useState<{
+    priceText: string | null;
+    hasIntroOffer: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!visible) {
+      wasVisibleRef.current = false;
+      return;
+    }
+    if (!wasVisibleRef.current) {
+      wasVisibleRef.current = true;
+      if (trigger) {
+        try {
+          trackPaywallViewed(trigger);
+        } catch {
+          // Analytics never blocks UI.
+        }
+      }
+    }
+
+    if (hasIntroOffer === undefined && priceText === undefined) {
+      let cancelled = false;
+      void getFamilyOffer()
+        .then((offer) => {
+          if (!cancelled) {
+            setFetchedOffer(offer);
+          }
+        })
+        .catch(() => undefined);
+      return () => {
+        cancelled = true;
+      };
+    }
+    return undefined;
+  }, [hasIntroOffer, priceText, trigger, visible]);
+
+  const effectivePriceText =
+    priceText !== undefined ? priceText : (fetchedOffer?.priceText ?? null);
+  const effectiveHasIntroOffer =
+    hasIntroOffer !== undefined ? hasIntroOffer : (fetchedOffer?.hasIntroOffer ?? false);
+  const effectiveLimitMessage =
+    limitMessage !== undefined ? limitMessage : defaultLimitMessageForTrigger(trigger);
 
   const isActionBlocked = isLoading || busy;
 
@@ -86,6 +155,20 @@ export function PaywallSheet({
       closeLabel={en.gallery.sheetClose}
     >
       <View testID="paywall-sheet" style={{ gap: spacing.md }}>
+        {effectiveLimitMessage ? (
+          <Text
+            testID="paywall-limit-message"
+            style={{
+              color: colors.textPrimary,
+              fontSize: typography.subtitle.fontSize,
+              lineHeight: typography.subtitle.lineHeight,
+              fontWeight: typography.subtitle.fontWeight,
+            }}
+          >
+            {effectiveLimitMessage}
+          </Text>
+        ) : null}
+
         <Text
           style={{
             color: colors.textSecondary,
@@ -162,7 +245,7 @@ export function PaywallSheet({
           <View style={{ gap: spacing.sm }}>
             {/* The price comes only from the store (RevenueCat package `priceString` plus the period).
                 Never show a made-up fallback price: it may differ from what the store charges. */}
-            {priceText ? (
+            {effectivePriceText ? (
               <Text
                 testID="paywall-price"
                 style={{
@@ -172,14 +255,16 @@ export function PaywallSheet({
                   fontWeight: typography.subtitle.fontWeight,
                 }}
               >
-                {priceText}
+                {effectivePriceText}
               </Text>
             ) : null}
 
             <Button
-              label={hasIntroOffer ? en.paywall.startFreeTrialCta : en.paywall.subscribeCta}
+              label={
+                effectiveHasIntroOffer ? en.paywall.startFreeTrialCta : en.paywall.subscribeCta
+              }
               accessibilityLabel={
-                hasIntroOffer ? en.paywall.startFreeTrialA11y : en.paywall.subscribeA11y
+                effectiveHasIntroOffer ? en.paywall.startFreeTrialA11y : en.paywall.subscribeA11y
               }
               disabled={isActionBlocked}
               onPress={() => {

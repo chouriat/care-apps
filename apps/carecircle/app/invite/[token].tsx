@@ -1,4 +1,4 @@
-import { ErrorState, useTheme } from '@carecircle/ui';
+import { Button, ErrorState, useTheme } from '@carecircle/ui';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
@@ -9,8 +9,9 @@ import {
   setPendingInviteToken,
   type AcceptInviteErrorCode,
 } from '../../src/features/circle';
+import { PaywallSheet } from '../../src/features/paywall/components';
 
-function messageForAcceptError(code: AcceptInviteErrorCode | null): string {
+export function messageForAcceptError(code: AcceptInviteErrorCode | null): string {
   switch (code) {
     case 'CIRCLE_FULL':
       return en.onboarding.joinCircleFullMessage;
@@ -22,6 +23,7 @@ function messageForAcceptError(code: AcceptInviteErrorCode | null): string {
     case 'VALIDATION_ERROR':
       return en.onboarding.joinInvalidMessage;
     case 'CIRCLE_LIMIT_REACHED':
+    case 'CIRCLE_LIMIT':
       return en.onboarding.limitReachedMessage;
     default:
       return en.onboarding.errorMessage;
@@ -38,6 +40,7 @@ export default function InviteTokenRoute() {
   const [isLoading, setIsLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
   const [errorCode, setErrorCode] = useState<AcceptInviteErrorCode | null>(null);
+  const [paywallVisible, setPaywallVisible] = useState(false);
 
   const attemptAccept = useCallback(async () => {
     const authStatus = getAppAuthController().getState().status;
@@ -66,6 +69,9 @@ export default function InviteTokenRoute() {
 
     setIsOffline(res.isOffline);
     setErrorCode(res.errorCode);
+    if (res.errorCode === 'CIRCLE_LIMIT') {
+      setPaywallVisible(true);
+    }
     setIsLoading(false);
   }, [router, token]);
 
@@ -96,7 +102,10 @@ export default function InviteTokenRoute() {
   return (
     <View
       testID={isOffline ? 'invite-accept-offline' : 'invite-accept-error'}
-      style={[styles.container, { backgroundColor: colors.background, padding: spacing.lg }]}
+      style={[
+        styles.container,
+        { backgroundColor: colors.background, padding: spacing.lg, gap: spacing.md },
+      ]}
     >
       <ErrorState
         title={isOffline ? en.onboarding.offlineTitle : en.onboarding.joinTitle}
@@ -105,6 +114,21 @@ export default function InviteTokenRoute() {
         onRetry={() => {
           void attemptAccept();
         }}
+      />
+      <View testID="invite-accept-continue-button">
+        <Button
+          variant="secondary"
+          label={en.onboarding.continueToApp}
+          accessibilityLabel={en.onboarding.continueToApp}
+          onPress={() => {
+            router.replace('/' as never);
+          }}
+        />
+      </View>
+      <PaywallSheet
+        visible={paywallVisible}
+        trigger="circles"
+        onClose={() => setPaywallVisible(false)}
       />
     </View>
   );

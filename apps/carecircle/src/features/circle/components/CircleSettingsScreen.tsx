@@ -28,6 +28,7 @@ export interface CircleSettingsScreenProps {
   onChangeMemberRole?: (userId: string, nextRole: InviteAssignableRole) => void | Promise<void>;
   onRemoveMember?: (userId: string) => void | Promise<void>;
   onShowPaywall?: () => void;
+  onUpgradePlan?: () => void;
   onOpenCareLog?: () => void;
   onRetry?: () => void;
 }
@@ -42,6 +43,7 @@ export function CircleSettingsScreen({
   circleName,
   currentUserId,
   currentUserRole,
+  planName = 'free',
   members,
   isLoading = false,
   isOffline = false,
@@ -53,6 +55,7 @@ export function CircleSettingsScreen({
   onChangeMemberRole,
   onRemoveMember,
   onShowPaywall,
+  onUpgradePlan,
   onOpenCareLog,
   onRetry,
 }: CircleSettingsScreenProps) {
@@ -357,6 +360,42 @@ export function CircleSettingsScreen({
                     onPress={() => onShowPaywall?.()}
                   />
                 </View>
+              </View>
+            ) : null}
+          </View>
+        </Card>
+      ) : null}
+
+      {!showStateOnly ? (
+        <Card>
+          <View testID="circle-plan-card" style={{ gap: spacing.xs }}>
+            <Text
+              style={{
+                color: colors.textPrimary,
+                fontSize: typography.subtitle.fontSize,
+                lineHeight: typography.subtitle.lineHeight,
+                fontWeight: typography.subtitle.fontWeight,
+              }}
+            >
+              {en.circle.planHeading}
+            </Text>
+            <Text
+              testID="circle-plan-value"
+              style={{
+                color: colors.textSecondary,
+                fontSize: typography.body.fontSize,
+                lineHeight: typography.body.lineHeight,
+              }}
+            >
+              {planName === 'family' ? en.circle.planFamily : en.circle.planFree}
+            </Text>
+            {isOwner && planName !== 'family' ? (
+              <View testID="circle-plan-upgrade-button">
+                <Button
+                  label={en.circle.planUpgradeCta}
+                  accessibilityLabel={en.circle.upgradeA11y}
+                  onPress={() => (onUpgradePlan ?? onShowPaywall)?.()}
+                />
               </View>
             ) : null}
           </View>

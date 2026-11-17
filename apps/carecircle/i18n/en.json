@@ -168,7 +168,11 @@
     "errorMessage": "We could not connect to the store right now. Please try again.",
     "offlineTitle": "You are offline",
     "offlineMessage": "Purchases and restores require an internet connection. Reconnect and try again.",
-    "retry": "Try again"
+    "retry": "Try again",
+    "limitMembers": "Upgrade to add more people (up to 8 members on the Family plan).",
+    "limitVisitNote": "AI visit-note summaries require the CareCircle Family plan.",
+    "limitPdfExport": "Exporting care log PDFs requires the CareCircle Family plan.",
+    "limitCircles": "Creating another care circle requires the CareCircle Family plan."
   },
   "onboarding": {
     "title": "Set up your CareCircle",
@@ -193,6 +197,7 @@
     "offlineTitle": "You are offline",
     "offlineMessage": "Creating a care circle requires an internet connection. Reconnect and try again.",
     "retry": "Try again",
+    "continueToApp": "Continue to CareCircle",
     "joinTitle": "Join a family circle",
     "joinBody": "Open the invite link shared by your family circle owner, or paste the invite link below.",
     "joinInputLabel": "Invite link or token",
@@ -224,7 +229,11 @@
     "removeMember": "Remove",
     "upgradeCta": "Upgrade to CareCircle Family",
     "upgradeA11y": "Upgrade to CareCircle Family to invite up to 8 members",
-    "circleFullMessage": "Your circle has reached the Free plan limit of 2 members. Upgrade to CareCircle Family for up to 8 members.",
+    "circleFullMessage": "Upgrade to add more people. Your circle has reached the Free plan limit of 2 members.",
+    "planHeading": "Current plan",
+    "planFree": "Free",
+    "planFamily": "Family",
+    "planUpgradeCta": "Upgrade",
     "notSavedTitle": "Not saved",
     "notSavedMessage": "Your change could not be saved. Please try again.",
     "loading": "Loading circle members...",

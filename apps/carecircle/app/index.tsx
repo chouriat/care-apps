@@ -1,17 +1,28 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ErrorState } from '@carecircle/ui';
+import { Button, ErrorState } from '@carecircle/ui';
 import { StyleSheet, Text, View } from 'react-native';
 import en from '../i18n/en.json';
 import { getSupabaseClient } from '../src/features/auth/api';
-import { acceptInviteViaRpc, consumePendingInviteToken } from '../src/features/circle';
+import {
+  acceptInviteViaRpc,
+  consumePendingInviteToken,
+  setPendingInviteToken,
+  type AcceptInviteErrorCode,
+} from '../src/features/circle';
 import { loadCareCircleMocks } from '../src/features/mocks';
+import { messageForAcceptError } from './invite/[token]';
 
 export default function PlaceholderScreen() {
   const router = useRouter();
   const mocks = loadCareCircleMocks();
   const hasAnonKey = Boolean(process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim());
   const [loadFailed, setLoadFailed] = useState(false);
+  const [pendingInviteError, setPendingInviteError] = useState<{
+    token: string;
+    errorCode: AcceptInviteErrorCode;
+    isOffline: boolean;
+  } | null>(null);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
@@ -30,6 +41,12 @@ export default function PlaceholderScreen() {
             router.replace('/(tabs)/today' as never);
             return;
           }
+          setPendingInviteError({
+            token: pendingToken,
+            errorCode: joinRes.errorCode,
+            isOffline: joinRes.isOffline,
+          });
+          return;
         }
 
         const supabase = getSupabaseClient();
@@ -55,6 +72,40 @@ export default function PlaceholderScreen() {
       cancelled = true;
     };
   }, [attempt, hasAnonKey, mocks, router]);
+
+  if (pendingInviteError) {
+    return (
+      <View testID="home-pending-invite-error" style={[styles.container, { gap: 12 }]}>
+        <ErrorState
+          title={
+            pendingInviteError.isOffline ? en.onboarding.offlineTitle : en.onboarding.joinTitle
+          }
+          message={
+            pendingInviteError.isOffline
+              ? en.onboarding.offlineMessage
+              : messageForAcceptError(pendingInviteError.errorCode)
+          }
+          retryLabel={en.onboarding.retry}
+          onRetry={() => {
+            setPendingInviteToken(pendingInviteError.token);
+            setPendingInviteError(null);
+            setAttempt((n) => n + 1);
+          }}
+        />
+        <View testID="home-pending-invite-continue-button">
+          <Button
+            variant="secondary"
+            label={en.onboarding.continueToApp}
+            accessibilityLabel={en.onboarding.continueToApp}
+            onPress={() => {
+              setPendingInviteError(null);
+              setAttempt((n) => n + 1);
+            }}
+          />
+        </View>
+      </View>
+    );
+  }
 
   if (loadFailed) {
     return (
