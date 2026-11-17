@@ -1,9 +1,16 @@
 import { z } from 'npm:zod@3.24.1';
+import {
+  createPostgrestCircleEntitlementStore,
+  verifyCircleFamilyEntitlement,
+  type CircleOwnerLookupStore,
+  type ServerEntitlementVerification,
+} from '../_shared/entitlements.ts';
 import { PROMPTS } from './prompts.ts';
 import {
   estimateCostMicrocents,
   fakeProvider,
   routes,
+  visitInputSchema,
   type AiProvider,
   type AiProviderName,
   type AiRouteConfig,
@@ -41,6 +48,19 @@ export type AiGatewayDeps = {
   readPrescriptionPhoto?: (opts: {
     imagePath: string;
   }) => Promise<{ bytes: Uint8Array; contentType: string } | null>;
+  checkCircleMedicationIds?: (opts: {
+    circleId: string;
+    medicationIds: string[];
+  }) => Promise<boolean>;
+  checkCircleFamilyEntitlement?: (opts: {
+    circleId: string;
+    now: Date;
+  }) => Promise<ServerEntitlementVerification>;
+  entitlementStore?: CircleOwnerLookupStore;
+  readVisitAudio?: (opts: {
+    audioPath: string;
+  }) => Promise<{ bytes: Uint8Array; contentType: string } | null>;
+  deleteVisitAudio?: (opts: { audioPath: string }) => Promise<void>;
   routeOverrides?: Partial<Record<AiTaskName, Partial<AiRouteConfig>>>;
   fetchImpl?: typeof fetch;
   getEnv?: (key: string) => string | undefined;
@@ -50,8 +70,13 @@ export type AiGatewayDeps = {
 const HOURLY_CALL_LIMIT = 60;
 const ONE_HOUR_MS = 3_600_000;
 const MAX_PRESCRIPTION_PHOTO_BYTES = 2 * 1024 * 1024;
+const MAX_VISIT_AUDIO_BYTES = 10 * 1024 * 1024;
+
 const RX_IMAGE_PATH_REGEX =
   /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jpg$/;
+
+const VISIT_AUDIO_PATH_REGEX =
+  /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.m4a$/;
 
 function bytesToBase64(bytes: Uint8Array): string {
   const chunkSize = 8192;
@@ -119,6 +144,7 @@ function createAnthropicProvider(
       const apiKey = getEnv('ANTHROPIC_API_KEY');
       if (!apiKey) throw new Error('Missing ANTHROPIC_API_KEY');
       const compiledPrompt = PROMPTS[req.task];
+      const systemPrompt = req.systemPromptOverride ?? compiledPrompt.systemPrompt;
       const userDataText = formatUserDataMessage(req.input);
       const userContent =
         req.image && typeof req.input.text !== 'string'
@@ -148,7 +174,7 @@ function createAnthropicProvider(
           model: stripModelPrefix(req.model),
           // Room for adaptive thinking plus the JSON answer; thinking tokens count here.
           max_tokens: 4096,
-          system: compiledPrompt.systemPrompt,
+          system: systemPrompt,
           messages: [
             {
               role: 'user',
@@ -191,6 +217,7 @@ function createGeminiProvider(
       const apiKey = getEnv('GEMINI_API_KEY');
       if (!apiKey) throw new Error('Missing GEMINI_API_KEY');
       const compiledPrompt = PROMPTS[req.task];
+      const systemPrompt = req.systemPromptOverride ?? compiledPrompt.systemPrompt;
       const modelId = stripModelPrefix(req.model);
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`;
       const userParts: Array<Record<string, unknown>> = [
@@ -206,6 +233,14 @@ function createGeminiProvider(
           },
         });
       }
+      if (req.audio) {
+        userParts.push({
+          inlineData: {
+            mimeType: req.audio.mimeType,
+            data: bytesToBase64(req.audio.bytes),
+          },
+        });
+      }
       const res = await fetchImpl(url, {
         method: 'POST',
         headers: {
@@ -214,7 +249,7 @@ function createGeminiProvider(
         },
         body: JSON.stringify({
           systemInstruction: {
-            parts: [{ text: compiledPrompt.systemPrompt }],
+            parts: [{ text: systemPrompt }],
           },
           contents: [
             {
@@ -360,6 +395,93 @@ function createDefaultReadPrescriptionPhoto(
   };
 }
 
+function createDefaultCheckCircleMedicationIds(
+  fetchImpl: typeof fetch,
+  getEnv: (key: string) => string | undefined,
+) {
+  return async ({
+    circleId,
+    medicationIds,
+  }: {
+    circleId: string;
+    medicationIds: string[];
+  }): Promise<boolean> => {
+    const uniqueIds = Array.from(new Set(medicationIds.map((id) => id.toLowerCase())));
+    if (uniqueIds.length === 0) return true;
+    const url = getEnv('SUPABASE_URL');
+    const apikey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+    if (!url || !apikey) throw new Error('medications lookup not configured');
+    const query = `circle_id=eq.${encodeURIComponent(circleId)}&id=in.(${uniqueIds.map((id) => encodeURIComponent(id)).join(',')})&select=id`;
+    const res = await fetchImpl(`${url}/rest/v1/medications?${query}`, {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${apikey}`,
+        apikey,
+      },
+    });
+    if (!res.ok) throw new Error(`medications check failed: ${res.status}`);
+    const rows = (await res.json()) as Array<{ id?: unknown }>;
+    if (!Array.isArray(rows)) throw new Error('medications check returned non-array');
+    const foundIds = new Set(
+      rows
+        .map((r) => (typeof r.id === 'string' ? r.id.toLowerCase() : ''))
+        .filter((id) => id.length > 0),
+    );
+    return uniqueIds.every((id) => foundIds.has(id));
+  };
+}
+
+function createDefaultReadVisitAudio(
+  fetchImpl: typeof fetch,
+  getEnv: (key: string) => string | undefined,
+) {
+  return async ({
+    audioPath,
+  }: {
+    audioPath: string;
+  }): Promise<{ bytes: Uint8Array; contentType: string } | null> => {
+    const url = getEnv('SUPABASE_URL');
+    const apikey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+    if (!url || !apikey) throw new Error('visit-audio storage not configured');
+    const res = await fetchImpl(`${url}/storage/v1/object/visit-audio/${audioPath}`, {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${apikey}`,
+        apikey,
+      },
+    });
+    if (res.status === 404 || res.status === 400) {
+      return null;
+    }
+    if (!res.ok) {
+      throw new Error(`visit-audio read failed: ${res.status}`);
+    }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const contentType = res.headers.get('content-type') ?? '';
+    return { bytes, contentType };
+  };
+}
+
+function createDefaultDeleteVisitAudio(
+  fetchImpl: typeof fetch,
+  getEnv: (key: string) => string | undefined,
+) {
+  return async ({ audioPath }: { audioPath: string }): Promise<void> => {
+    const url = getEnv('SUPABASE_URL');
+    const apikey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+    if (!url || !apikey) return;
+    await fetchImpl(`${url}/storage/v1/object/visit-audio`, {
+      method: 'DELETE',
+      headers: {
+        authorization: `Bearer ${apikey}`,
+        apikey,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ prefixes: [audioPath] }),
+    });
+  };
+}
+
 export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
   const {
     verifyJwt = defaultVerifyJwt,
@@ -375,6 +497,17 @@ export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
     createDefaultCheckPrescriptionCircleAccess(fetchImpl, getEnv);
   const readPrescriptionPhoto =
     deps.readPrescriptionPhoto ?? createDefaultReadPrescriptionPhoto(fetchImpl, getEnv);
+  const checkCircleMedicationIds =
+    deps.checkCircleMedicationIds ?? createDefaultCheckCircleMedicationIds(fetchImpl, getEnv);
+  const entitlementStore =
+    deps.entitlementStore ?? createPostgrestCircleEntitlementStore(fetchImpl, getEnv);
+  const checkCircleFamilyEntitlement =
+    deps.checkCircleFamilyEntitlement ??
+    (({ circleId, now: checkNow }: { circleId: string; now: Date }) =>
+      verifyCircleFamilyEntitlement({ circleId, store: entitlementStore, now: checkNow }));
+  const readVisitAudio = deps.readVisitAudio ?? createDefaultReadVisitAudio(fetchImpl, getEnv);
+  const deleteVisitAudio =
+    deps.deleteVisitAudio ?? createDefaultDeleteVisitAudio(fetchImpl, getEnv);
 
   const providerMap: Record<AiProviderName, AiProvider> = {
     fake: deps.providers?.fake ?? fakeProvider,
@@ -412,6 +545,45 @@ export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
     }
 
     let providerImage: { bytes: Uint8Array; mimeType: 'image/jpeg' } | undefined;
+    let providerInput: Record<string, unknown> = input;
+    let sttInputTokens = 0;
+    let sttOutputTokens = 0;
+    let sttCostMicrocents = 0;
+
+    const useCiFake =
+      getEnv('CARECIRCLE_CI_FAKE_AI') === '1' &&
+      ['http://kong:8000', 'http://127.0.0.1:54321'].includes(
+        (getEnv('SUPABASE_URL') ?? '').trim().replace(/\/+$/, ''),
+      );
+    const provider = useCiFake ? providerMap.fake : providerMap[route.provider];
+    const { model, promptVersion: prompt_version, schema } = route;
+    const startedAt = now();
+    let input_tokens = 0;
+    let output_tokens = 0;
+
+    const record = (validation_ok: boolean, error_code: AiErrorCode | null) => {
+      const latency_ms = Math.max(0, now() - startedAt);
+      const totalInputTokens = sttInputTokens + input_tokens;
+      const totalOutputTokens = sttOutputTokens + output_tokens;
+      const estimated_cost_microcents =
+        sttCostMicrocents + estimateCostMicrocents(route, input_tokens, output_tokens);
+      const row: AiCallLogRow = {
+        request_id,
+        user_id: authUser.userId,
+        task,
+        model,
+        prompt_version,
+        latency_ms,
+        input_tokens: totalInputTokens,
+        output_tokens: totalOutputTokens,
+        estimated_cost_microcents,
+        cost_currency: route.costCurrency,
+        validation_ok,
+        error_code,
+      };
+      return logCall(row).catch(() => console.error('ai_calls log failed', { request_id, task }));
+    };
+
     if (task === 'carecircle.extractPrescription') {
       const rawImagePath = input.imagePath;
       const pathMatch =
@@ -448,38 +620,160 @@ export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
         return fail('INPUT_INVALID', 'Invalid or missing prescription photo.', false, 400);
       }
       providerImage = { bytes: photo.bytes, mimeType: 'image/jpeg' };
+    } else if (task === 'carecircle.summarizeVisit') {
+      const parsedVisit = visitInputSchema.safeParse(input);
+      if (!parsedVisit.success) {
+        return fail('INPUT_INVALID', 'Invalid summarizeVisit input.', false, 400);
+      }
+
+      let circleId: string;
+      const audioPath = parsedVisit.data.audioPath;
+      if (audioPath !== undefined) {
+        const audioMatch = VISIT_AUDIO_PATH_REGEX.exec(audioPath);
+        if (!audioMatch) {
+          return fail('INPUT_INVALID', 'Invalid visit audio path.', false, 400);
+        }
+        const pathCircleId = audioMatch[1]!;
+        if (
+          parsedVisit.data.circleId !== undefined &&
+          parsedVisit.data.circleId.toLowerCase() !== pathCircleId
+        ) {
+          return fail('INPUT_INVALID', 'circleId does not match audioPath.', false, 400);
+        }
+        circleId = pathCircleId;
+      } else {
+        if (!parsedVisit.data.circleId) {
+          return fail('INPUT_INVALID', 'circleId is required with text.', false, 400);
+        }
+        circleId = parsedVisit.data.circleId.toLowerCase();
+      }
+
+      let hasAccess = false;
+      try {
+        hasAccess = await checkPrescriptionCircleAccess({ userId: authUser.userId, circleId });
+      } catch {
+        return fail('PROVIDER_ERROR', 'Circle access check unavailable.', true, 503);
+      }
+      if (!hasAccess) {
+        return fail('INPUT_INVALID', 'Invalid visit input.', false, 403);
+      }
+
+      if (parsedVisit.data.knownMeds.length > 0) {
+        let medsBelong = false;
+        try {
+          medsBelong = await checkCircleMedicationIds({
+            circleId,
+            medicationIds: parsedVisit.data.knownMeds.map((m) => m.id),
+          });
+        } catch {
+          return fail('PROVIDER_ERROR', 'Medication check unavailable.', true, 503);
+        }
+        if (!medsBelong) {
+          return fail('INPUT_INVALID', 'Invalid knownMeds for circle.', false, 400);
+        }
+      }
+
+      let planCheck: ServerEntitlementVerification;
+      try {
+        planCheck = await checkCircleFamilyEntitlement({ circleId, now: new Date(now()) });
+      } catch {
+        return fail('PROVIDER_ERROR', 'Entitlement check unavailable.', true, 503);
+      }
+      if (!planCheck.allowed) {
+        if (planCheck.reason === 'STORE_ERROR') {
+          return fail('PROVIDER_ERROR', 'Entitlement check unavailable.', true, 503);
+        }
+        return fail('QUOTA_EXCEEDED', 'Family plan required for visit summaries.', false, 402);
+      }
+
+      if (audioPath !== undefined) {
+        let transcribedText: string | null = null;
+        try {
+          let audioObj: { bytes: Uint8Array; contentType: string } | null = null;
+          try {
+            audioObj = await readVisitAudio({ audioPath });
+          } catch {
+            return fail('PROVIDER_ERROR', 'Visit audio storage unavailable.', true, 503);
+          }
+
+          const ct = audioObj?.contentType.trim() ?? '';
+          if (
+            !audioObj ||
+            !/^audio\/(?:mp4|m4a|x-m4a)(?:\s*;.*)?$/i.test(ct) ||
+            audioObj.bytes.byteLength === 0 ||
+            audioObj.bytes.byteLength > MAX_VISIT_AUDIO_BYTES
+          ) {
+            return fail('INPUT_INVALID', 'Invalid or missing visit audio.', false, 400);
+          }
+
+          const audioMimeType: 'audio/mp4' | 'audio/m4a' = /^audio\/m4a/i.test(ct)
+            ? 'audio/m4a'
+            : 'audio/mp4';
+
+          const sttConfig = route.speechToText ?? routes['carecircle.summarizeVisit'].speechToText!;
+          const sttProvider = useCiFake ? providerMap.fake : providerMap[sttConfig.provider];
+          const sttController = new AbortController();
+          const sttTimer = setTimeout(() => sttController.abort(), sttConfig.timeoutMs);
+
+          try {
+            for (const attempt of [1, 2] as const) {
+              const sttRes = await sttProvider.generate({
+                task,
+                provider: sttConfig.provider,
+                model: sttConfig.model,
+                promptFile: route.promptFile,
+                promptVersion: sttConfig.promptVersion,
+                schema: sttConfig.schema,
+                jsonSchema: sttConfig.jsonSchema,
+                timeoutMs: sttConfig.timeoutMs,
+                inputMicrocentsPer1k: sttConfig.inputMicrocentsPer1k,
+                outputMicrocentsPer1k: sttConfig.outputMicrocentsPer1k,
+                costCurrency: sttConfig.costCurrency,
+                input: { task: 'transcribeVisitAudio' },
+                audio: { bytes: audioObj.bytes, mimeType: audioMimeType },
+                systemPromptOverride: sttConfig.systemPrompt,
+                attempt,
+                signal: sttController.signal,
+              });
+              sttInputTokens += sttRes.inputTokens;
+              sttOutputTokens += sttRes.outputTokens;
+              const parsedStt = sttConfig.schema.safeParse(sttRes.output);
+              if (parsedStt.success) {
+                transcribedText = parsedStt.data.transcript;
+                break;
+              }
+            }
+            sttCostMicrocents = estimateCostMicrocents(sttConfig, sttInputTokens, sttOutputTokens);
+            if (transcribedText === null) {
+              await record(false, 'SCHEMA_INVALID');
+              return fail('SCHEMA_INVALID', 'Audio transcription failed validation twice.', false);
+            }
+          } catch (err) {
+            sttCostMicrocents = estimateCostMicrocents(sttConfig, sttInputTokens, sttOutputTokens);
+            const retryable = err instanceof ProviderHttpError ? err.retryable : true;
+            await record(false, 'PROVIDER_ERROR');
+            return fail('PROVIDER_ERROR', 'Audio transcription provider call failed.', retryable);
+          } finally {
+            clearTimeout(sttTimer);
+          }
+        } finally {
+          await deleteVisitAudio({ audioPath }).catch(() => undefined);
+        }
+
+        const combinedTranscript = parsedVisit.data.text
+          ? `${transcribedText}\n${parsedVisit.data.text}`
+          : transcribedText;
+        providerInput = {
+          text: combinedTranscript,
+          knownMeds: parsedVisit.data.knownMeds,
+        };
+      } else {
+        providerInput = {
+          text: parsedVisit.data.text,
+          knownMeds: parsedVisit.data.knownMeds,
+        };
+      }
     }
-
-    const useCiFake =
-      getEnv('CARECIRCLE_CI_FAKE_AI') === '1' &&
-      ['http://kong:8000', 'http://127.0.0.1:54321'].includes(
-        (getEnv('SUPABASE_URL') ?? '').trim().replace(/\/+$/, ''),
-      );
-    const provider = useCiFake ? providerMap.fake : providerMap[route.provider];
-    const { model, promptVersion: prompt_version, schema } = route;
-    const startedAt = now();
-    let input_tokens = 0;
-    let output_tokens = 0;
-
-    const record = (validation_ok: boolean, error_code: AiErrorCode | null) => {
-      const latency_ms = Math.max(0, now() - startedAt);
-      const estimated_cost_microcents = estimateCostMicrocents(route, input_tokens, output_tokens);
-      const row: AiCallLogRow = {
-        request_id,
-        user_id: authUser.userId,
-        task,
-        model,
-        prompt_version,
-        latency_ms,
-        input_tokens,
-        output_tokens,
-        estimated_cost_microcents,
-        cost_currency: route.costCurrency,
-        validation_ok,
-        error_code,
-      };
-      return logCall(row).catch(() => console.error('ai_calls log failed', { request_id, task }));
-    };
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), route.timeoutMs);
@@ -487,7 +781,7 @@ export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
       for (const attempt of [1, 2] as const) {
         const res = await provider.generate({
           ...route,
-          input,
+          input: providerInput,
           ...(providerImage ? { image: providerImage } : {}),
           attempt,
           signal: controller.signal,

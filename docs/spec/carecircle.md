@@ -142,7 +142,7 @@ Times are local to `circles.timezone`. RLS: every table with `circle_id` allows 
 
 A field with confidence under 0.8 is highlighted on the confirm screen. "twice daily" maps to 08:00 and 20:00; "three times daily" to 08:00, 14:00, 20:00; the user can edit.
 
-`carecircle.summarizeVisit` input `{ audioPath?: string, text?: string, knownMeds: [{id, name, strength}] }` (one of audio or text required; audio max 10 minutes), output:
+`carecircle.summarizeVisit` input `{ circleId?: string, audioPath?: string, text?: string, knownMeds: [{id, name, strength}] }` (one of audio or text required; `circleId` is required with `text`; with `audioPath` it must match the circle in the path; audio max 10 minutes), output:
 
 ```json
 {
