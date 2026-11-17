@@ -232,7 +232,9 @@
     "errorMessage": "We could not load your circle members right now. Please try again.",
     "offlineTitle": "You are offline",
     "offlineMessage": "Managing circle members and invites requires an internet connection.",
-    "retry": "Try again"
+    "retry": "Try again",
+    "careLogLabel": "Care log",
+    "careLogSubtitle": "View timeline of doses, medications, appointments, tasks, and visit notes"
   },
   "home": {
     "loadErrorTitle": "Could not load your care circle",
@@ -389,6 +391,35 @@
     "invalidTimesMessage": "Schedule times must be in 24-hour HH:MM format (for example 08:00, 20:00).",
     "invalidDaysMessage": "Weekly schedule days must be mon, tue, wed, thu, fri, sat, or sun.",
     "invalidIntervalMessage": "Interval must be a whole number of days (1 or more)."
+  },
+  "careLog": {
+    "title": "Care log",
+    "subtitle": "Complete family care history",
+    "loading": "Loading care log...",
+    "emptyTitle": "No care log entries yet",
+    "emptyMessage": "Logged doses, medication updates, appointments, tasks, and visit notes will appear here.",
+    "errorTitle": "Could not load care log",
+    "errorMessage": "We could not load the care log right now. Please try again.",
+    "retry": "Try again",
+    "filterTypeHeading": "Filter by type",
+    "filterPersonHeading": "Filter by person",
+    "filterAllTypes": "All types",
+    "filterAllPeople": "Everyone",
+    "typeDose": "Dose",
+    "typeMedChange": "Med change",
+    "typeAppointment": "Appointment",
+    "typeTask": "Task",
+    "typeVisitNote": "Visit note",
+    "typeMember": "Member",
+    "loadMore": "Load more",
+    "exportHeading": "Export care log PDF",
+    "exportFromLabel": "From (YYYY-MM-DD)",
+    "exportToLabel": "To (YYYY-MM-DD)",
+    "exportButton": "Export PDF",
+    "exportingButton": "Exporting...",
+    "exportRangeInvalidMessage": "Select a valid date range up to 90 days.",
+    "exportErrorMessage": "Could not export the care log PDF. Please try again.",
+    "actorSystem": "System"
   },
   "calendar": {
     "title": "Calendar",
