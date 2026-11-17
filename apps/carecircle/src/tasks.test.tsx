@@ -164,21 +164,21 @@ function createFakeTasksClient(tables: Record<string, Row[]>) {
     from,
     rpc: async () => ({ data: null, error: null }),
     channel: jest.fn((topic: string) => {
-      const ch: Record<string, unknown> = {
+      const ch = {
         topic,
         on: jest.fn(
           (
             _type: string,
             filter: { table?: string },
             cb: (payload: PostgresChangesPayload) => void,
-          ): Record<string, unknown> => {
+          ) => {
             if (filter?.table === 'tasks') {
               tasksRealtimeCallback = cb;
             }
             return ch;
           },
         ),
-        subscribe: jest.fn((): Record<string, unknown> => ch),
+        subscribe: jest.fn(() => ch),
         unsubscribe: unsubscribeSpy,
       };
       return ch;
@@ -241,7 +241,7 @@ beforeEach(() => {
 describe('CC-6b Shared tasks screen', () => {
   it('owner/helper can add, assign, complete, and un-complete a task through the real router and sync Today tasks due today', async () => {
     const { tables, routes } = setupRouter(HELPER_ID, []);
-    await renderRouter(routes, { initialUrl: '/tasks', wrapper });
+    const view = await renderRouter(routes, { initialUrl: '/tasks', wrapper });
 
     await waitFor(() => {
       expect(screen.getByTestId('tasks-empty-state')).toBeTruthy();

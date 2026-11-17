@@ -30,7 +30,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(27);
+select plan(30);
 
 create or replace function pg_temp.as_user(p_user_id uuid)
 returns void
