@@ -98,7 +98,8 @@ jobs:
       - name: Start local Supabase with Auth, Storage, Edge Functions and Mailpit
         run: |
           WORKDIR="$(node supabase/carecircle/cli.mjs stage)"
-          # Keep storage-api and edge-runtime enabled so Maestro flows can call the local ai Edge Function.
+          # Keep storage-api and edge-runtime enabled so scan-confirm.yaml and visit-note-typed.yaml
+          # upload to Storage and call the local ai Edge Function.
           supabase start --workdir "$WORKDIR" --exclude studio,imgproxy,logflare,vector,realtime,postgres-meta,supavisor
           ANON_KEY="$(supabase status --workdir "$WORKDIR" -o json | node -e 'const d = JSON.parse(require("fs").readFileSync(0, "utf8")); process.stdout.write(d.ANON_KEY || d.PUBLISHABLE_KEY || "");')"
           if [ -z "$ANON_KEY" ]; then
