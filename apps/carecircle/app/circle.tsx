@@ -1,17 +1,23 @@
 import type { MemberRole } from '@carecircle/core';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { View } from 'react-native';
+import { Share, View } from 'react-native';
 import en from '../i18n/en.json';
+import { getAppAuthController } from '../src/features/auth/api';
 import {
   CircleSettingsScreen,
   createInviteViaRpc,
+  deleteAccountViaFunction,
+  exportMyDataViaRpc,
   loadCircleSettings,
+  openStoreSubscriptionSettings,
   removeCircleMember,
+  transferOwnershipViaRpc,
   updateMemberRole,
   type CircleMemberItem,
   type CircleSettingsDeps,
   type CreateInviteErrorCode,
+  type DeleteAccountErrorCode,
   type InviteAssignableRole,
   type MemberActionErrorCode,
 } from '../src/features/circle';
@@ -37,9 +43,9 @@ export default function CircleRoute({ deps }: CircleRouteProps = {}) {
   const [members, setMembers] = useState<CircleMemberItem[]>([]);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [inviteExpiresAt, setInviteExpiresAt] = useState<string | null>(null);
-  const [errorCode, setErrorCode] = useState<CreateInviteErrorCode | MemberActionErrorCode | null>(
-    null,
-  );
+  const [errorCode, setErrorCode] = useState<
+    CreateInviteErrorCode | MemberActionErrorCode | DeleteAccountErrorCode | null
+  >(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [paywallVisible, setPaywallVisible] = useState(false);
   const [paywallTrigger, setPaywallTrigger] = useState<'members' | 'settings'>('members');
@@ -162,6 +168,71 @@ export default function CircleRoute({ deps }: CircleRouteProps = {}) {
     [circleId],
   );
 
+  const handleTransferOwnership = useCallback(
+    async (newOwnerId: string) => {
+      if (!circleId) return;
+      setErrorCode(null);
+      setActionNotice(null);
+      const currentDeps = depsRef.current;
+      const res = await transferOwnershipViaRpc(
+        { circleId, newOwnerId },
+        currentDeps?.getClient ? { getClient: currentDeps.getClient as never } : undefined,
+      );
+      if (!res.ok) {
+        setIsOffline(res.isOffline);
+        setErrorCode(res.errorCode);
+        setActionNotice(en.circle.notSavedMessage);
+        return;
+      }
+      await reload();
+    },
+    [circleId, reload],
+  );
+
+  const handleExportData = useCallback(async () => {
+    setErrorCode(null);
+    setActionNotice(null);
+    const currentDeps = depsRef.current;
+    const res = await exportMyDataViaRpc(
+      currentDeps?.getClient ? { getClient: currentDeps.getClient as never } : undefined,
+    );
+    if (!res.ok) {
+      setIsOffline(res.isOffline);
+      if (!res.isOffline) {
+        setActionNotice(en.circle.notSavedMessage);
+      }
+      return;
+    }
+    await Share.share({ message: res.json }).catch(() => undefined);
+  }, []);
+
+  const handleManageSubscription = useCallback(async () => {
+    await openStoreSubscriptionSettings().catch(() => undefined);
+  }, []);
+
+  const handleDeleteAccount = useCallback(async () => {
+    setErrorCode(null);
+    setActionNotice(null);
+    const currentDeps = depsRef.current;
+    const res = await deleteAccountViaFunction(
+      currentDeps?.getClient ? { getClient: currentDeps.getClient as never } : undefined,
+    );
+    if (!res.ok) {
+      setIsOffline(res.isOffline);
+      setErrorCode(res.errorCode);
+      if (res.errorCode !== 'OWNER_MUST_TRANSFER' && !res.isOffline) {
+        setActionNotice(en.circle.notSavedMessage);
+      }
+      return;
+    }
+    try {
+      await getAppAuthController().signOut();
+    } catch {
+      // Ignore if session was already invalidated by account deletion
+    }
+    router.replace('/(auth)/sign-in' as never);
+  }, [router]);
+
   return (
     <View style={{ flex: 1 }}>
       <CircleSettingsScreen
@@ -181,6 +252,7 @@ export default function CircleRoute({ deps }: CircleRouteProps = {}) {
         onCreateInvite={handleCreateInvite}
         onChangeMemberRole={handleChangeMemberRole}
         onRemoveMember={handleRemoveMember}
+        onTransferOwnership={handleTransferOwnership}
         onShowPaywall={() => {
           setPaywallTrigger('members');
           setPaywallVisible(true);
@@ -190,6 +262,9 @@ export default function CircleRoute({ deps }: CircleRouteProps = {}) {
           setPaywallVisible(true);
         }}
         onOpenCareLog={() => router.push('/log' as never)}
+        onExportData={handleExportData}
+        onManageSubscription={handleManageSubscription}
+        onDeleteAccount={handleDeleteAccount}
         onRetry={() => {
           void reload();
         }}

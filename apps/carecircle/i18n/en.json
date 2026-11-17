@@ -243,7 +243,19 @@
     "offlineMessage": "Managing circle members and invites requires an internet connection.",
     "retry": "Try again",
     "careLogLabel": "Care log",
-    "careLogSubtitle": "View timeline of doses, medications, appointments, tasks, and visit notes"
+    "careLogSubtitle": "View timeline of doses, medications, appointments, tasks, and visit notes",
+    "transferOwnership": "Make Owner",
+    "accountHeading": "Account and data",
+    "exportDataCta": "Export my data (JSON)",
+    "exportDataA11y": "Export your own profile and care circle data as JSON",
+    "manageSubscriptionCta": "Manage store subscription",
+    "manageSubscriptionA11y": "Open Apple App Store or Google Play subscription settings",
+    "deleteAccountCta": "Delete account",
+    "deleteAccountA11y": "Delete your CareCircle account",
+    "deleteAccountConfirmPrompt": "Permanently delete your CareCircle account? Deleting your account does not cancel store subscriptions.",
+    "deleteAccountConfirmCta": "Confirm delete account",
+    "deleteAccountCancelCta": "Cancel",
+    "deleteAccountOwnerMustTransfer": "Transfer ownership to another member or remove other members before deleting your account."
   },
   "home": {
     "loadErrorTitle": "Could not load your care circle",
