@@ -1,4 +1,5 @@
 import type { MemberRole } from '@carecircle/core';
+import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { View } from 'react-native';
 import en from '../i18n/en.json';
@@ -21,6 +22,7 @@ export interface CircleRouteProps {
 }
 
 export default function CircleRoute({ deps }: CircleRouteProps = {}) {
+  const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
   const [hasError, setHasError] = useState(false);
@@ -167,6 +169,7 @@ export default function CircleRoute({ deps }: CircleRouteProps = {}) {
         onChangeMemberRole={handleChangeMemberRole}
         onRemoveMember={handleRemoveMember}
         onShowPaywall={() => setPaywallVisible(true)}
+        onOpenCareLog={() => router.push('/log' as never)}
         onRetry={() => {
           void reload();
         }}

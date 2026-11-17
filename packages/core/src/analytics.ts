@@ -40,6 +40,7 @@ export interface CareCircleAnalyticsEventMap {
     questionCount?: number;
   };
   cc_log_exported: {
+    days?: number;
     daySpan?: number;
     entryCount?: number;
   };
@@ -107,6 +108,7 @@ const EVENT_PROPERTY_RULES: {
     questionCount: { kind: 'count', required: false },
   },
   cc_log_exported: {
+    days: { kind: 'count', required: false },
     daySpan: { kind: 'count', required: false },
     entryCount: { kind: 'count', required: false },
   },
