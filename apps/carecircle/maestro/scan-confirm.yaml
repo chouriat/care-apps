@@ -51,16 +51,6 @@ env:
     id: 'scan-pick-photo-button'
 - tapOn:
     id: '.*icon_thumbnail.*'
-    optional: true
-- tapOn:
-    id: '.*icon_thumb.*'
-    optional: true
-- tapOn:
-    text: '.*Photo taken.*'
-    optional: true
-- tapOn:
-    text: '.*rx-test.*'
-    optional: true
 - assertVisible:
     id: 'scan-draft-review'
 # Before Save is tapped, go back to /meds and verify no medications row exists yet
@@ -78,18 +68,12 @@ env:
     id: 'scan-pick-photo-button'
 - tapOn:
     id: '.*icon_thumbnail.*'
-    optional: true
-- tapOn:
-    id: '.*icon_thumb.*'
-    optional: true
-- tapOn:
-    text: '.*Photo taken.*'
-    optional: true
-- tapOn:
-    text: '.*rx-test.*'
-    optional: true
 - assertVisible:
     id: 'scan-draft-review'
+- scrollUntilVisible:
+    element:
+      id: 'scan-save-button'
+    direction: DOWN
 - tapOn:
     id: 'scan-save-button'
 - assertVisible:
