@@ -550,7 +550,12 @@ export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
     let sttOutputTokens = 0;
     let sttCostMicrocents = 0;
 
-    const provider = providerMap[route.provider];
+    const useCiFake =
+      getEnv('CARECIRCLE_CI_FAKE_AI') === '1' &&
+      ['http://kong:8000', 'http://127.0.0.1:54321'].includes(
+        (getEnv('SUPABASE_URL') ?? '').trim().replace(/\/+$/, ''),
+      );
+    const provider = useCiFake ? providerMap.fake : providerMap[route.provider];
     const { model, promptVersion: prompt_version, schema } = route;
     const startedAt = now();
     let input_tokens = 0;
@@ -706,7 +711,7 @@ export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
             : 'audio/mp4';
 
           const sttConfig = route.speechToText ?? routes['carecircle.summarizeVisit'].speechToText!;
-          const sttProvider = providerMap[sttConfig.provider];
+          const sttProvider = useCiFake ? providerMap.fake : providerMap[sttConfig.provider];
           const sttController = new AbortController();
           const sttTimer = setTimeout(() => sttController.abort(), sttConfig.timeoutMs);
 
