@@ -456,6 +456,7 @@ export function OnboardingStartScreen({
       )}
 
       <Text
+        testID="onboarding-disclaimer"
         style={{
           color: colors.textMuted,
           fontSize: typography.caption.fontSize,

@@ -5,6 +5,7 @@ import {
   type MemberRole,
 } from '@carecircle/core';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { Linking, Platform } from 'react-native';
 import en from '../../../i18n/en.json';
 import { getSupabaseClient } from '../auth/api';
 import { loadCareCircleMocks } from '../mocks';
@@ -36,6 +37,11 @@ export type MemberActionErrorCode =
   | 'PERMISSION_DENIED'
   | 'NETWORK_ERROR'
   | 'MEMBER_ACTION_FAILED';
+
+export type DeleteAccountErrorCode =
+  | 'OWNER_MUST_TRANSFER'
+  | 'NETWORK_ERROR'
+  | 'DELETE_ACCOUNT_FAILED';
 
 export interface CircleMemberItem {
   circleId: string;
@@ -716,4 +722,165 @@ export async function loadCircleSettings(
       isOffline: isNetworkFailureMessage(message),
     };
   }
+}
+
+export async function transferOwnershipViaRpc(
+  input: { circleId: string; newOwnerId: string },
+  deps: {
+    getClient?: () => {
+      rpc: (
+        fn: string,
+        args: Record<string, unknown>,
+      ) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }>;
+    };
+  } = {},
+): Promise<{ ok: true } | { ok: false; errorCode: MemberActionErrorCode; isOffline: boolean }> {
+  const circleId = typeof input.circleId === 'string' ? input.circleId.trim() : '';
+  const newOwnerId = typeof input.newOwnerId === 'string' ? input.newOwnerId.trim() : '';
+  if (!circleId || !newOwnerId) {
+    return { ok: false, errorCode: 'VALIDATION_ERROR', isOffline: false };
+  }
+
+  const getClient =
+    deps.getClient ??
+    (() =>
+      getSupabaseClient() as unknown as {
+        rpc: (
+          fn: string,
+          args: Record<string, unknown>,
+        ) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }>;
+      });
+
+  try {
+    const client = getClient();
+    const { error } = await client.rpc('transfer_ownership', {
+      circleId,
+      newOwnerId,
+    });
+    if (error) {
+      if (isNetworkFailureMessage(error.message, error.code)) {
+        return { ok: false, errorCode: 'NETWORK_ERROR', isOffline: true };
+      }
+      if (
+        error.code === '42501' ||
+        /only the circle owner|permission denied|not allowed/i.test(error.message)
+      ) {
+        return { ok: false, errorCode: 'PERMISSION_DENIED', isOffline: false };
+      }
+      return { ok: false, errorCode: 'MEMBER_ACTION_FAILED', isOffline: false };
+    }
+    return { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const offline = isNetworkFailureMessage(message);
+    return {
+      ok: false,
+      errorCode: offline ? 'NETWORK_ERROR' : 'MEMBER_ACTION_FAILED',
+      isOffline: offline,
+    };
+  }
+}
+
+export async function exportMyDataViaRpc(
+  deps: {
+    getClient?: () => {
+      rpc: (
+        fn: string,
+      ) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }>;
+    };
+  } = {},
+): Promise<{ ok: true; json: string } | { ok: false; isOffline: boolean }> {
+  const getClient =
+    deps.getClient ??
+    (() =>
+      getSupabaseClient() as unknown as {
+        rpc: (
+          fn: string,
+        ) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }>;
+      });
+
+  try {
+    const client = getClient();
+    const { data, error } = await client.rpc('export_user_data');
+    if (error || !data) {
+      const offline = error ? isNetworkFailureMessage(error.message, error.code) : false;
+      return { ok: false, isOffline: offline };
+    }
+    return { ok: true, json: JSON.stringify(data, null, 2) };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, isOffline: isNetworkFailureMessage(message) };
+  }
+}
+
+export async function deleteAccountViaFunction(
+  deps: {
+    getClient?: () => {
+      functions?: {
+        invoke: (
+          fn: string,
+          opts?: { method?: 'POST'; body?: Record<string, unknown> },
+        ) => PromiseLike<{
+          data: unknown;
+          error: { message: string; code?: string; context?: unknown } | null;
+        }>;
+      };
+    };
+  } = {},
+): Promise<{ ok: true } | { ok: false; errorCode: DeleteAccountErrorCode; isOffline: boolean }> {
+  const getClient = deps.getClient ?? (() => getSupabaseClient() as never);
+  try {
+    const client = getClient();
+    if (!client.functions?.invoke) {
+      return { ok: false, errorCode: 'DELETE_ACCOUNT_FAILED', isOffline: false };
+    }
+    const { data, error } = await client.functions.invoke('delete-account', {
+      method: 'POST',
+    });
+    const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+    if (error) {
+      const msg = error.message ?? '';
+      if (isNetworkFailureMessage(msg, error.code)) {
+        return { ok: false, errorCode: 'NETWORK_ERROR', isOffline: true };
+      }
+      if (
+        msg.includes('OWNER_MUST_TRANSFER') ||
+        record?.code === 'OWNER_MUST_TRANSFER' ||
+        (record?.error as { code?: unknown } | undefined)?.code === 'OWNER_MUST_TRANSFER'
+      ) {
+        return { ok: false, errorCode: 'OWNER_MUST_TRANSFER', isOffline: false };
+      }
+      return { ok: false, errorCode: 'DELETE_ACCOUNT_FAILED', isOffline: false };
+    }
+    if (
+      record?.ok === false &&
+      (record?.code === 'OWNER_MUST_TRANSFER' ||
+        (record?.error as { code?: unknown } | undefined)?.code === 'OWNER_MUST_TRANSFER')
+    ) {
+      return { ok: false, errorCode: 'OWNER_MUST_TRANSFER', isOffline: false };
+    }
+    return { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const offline = isNetworkFailureMessage(message);
+    return {
+      ok: false,
+      errorCode: offline ? 'NETWORK_ERROR' : 'DELETE_ACCOUNT_FAILED',
+      isOffline: offline,
+    };
+  }
+}
+
+export const STORE_SUBSCRIPTION_URLS = {
+  ios: 'https://apps.apple.com/account/subscriptions',
+  android: 'https://play.google.com/store/account/subscriptions',
+} as const;
+
+export async function openStoreSubscriptionSettings(
+  platformOs: string = Platform.OS,
+  openUrl: (url: string) => Promise<unknown> = (url) => Linking.openURL(url),
+): Promise<string> {
+  const url = platformOs === 'ios' ? STORE_SUBSCRIPTION_URLS.ios : STORE_SUBSCRIPTION_URLS.android;
+  await openUrl(url);
+  return url;
 }
