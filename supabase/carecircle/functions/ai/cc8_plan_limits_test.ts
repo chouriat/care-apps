@@ -4,7 +4,6 @@
 // with forged `entitlements` fields in the request body, and that an expired entitlement
 // (`expires_at` in the past, `active: true`) counts as free.
 
-import { createExportLogHandler } from '../export-log/handler.ts';
 import { createAiGatewayHandler } from './handler.ts';
 
 function assert(cond: unknown, msg: string): asserts cond {
@@ -121,10 +120,10 @@ Deno.test(
       entitlementRow: null,
     });
 
-    for (const [label, token, expectedCode] of [
-      ['owner', 'jwt-owner', 'QUOTA_EXCEEDED'],
-      ['helper', 'jwt-helper', 'QUOTA_EXCEEDED'],
-      ['viewer', 'jwt-viewer', 'INPUT_INVALID'],
+    for (const [label, token] of [
+      ['owner', 'jwt-owner'],
+      ['helper', 'jwt-helper'],
+      ['viewer', 'jwt-viewer'],
     ] as const) {
       const res = await handler(makeSummarizeVisitRequest(token));
       const body = (await res.json()) as {
@@ -133,8 +132,8 @@ Deno.test(
       };
       assert(body.ok === false, `expected ok: false for free circle ${label}`);
       assert(
-        body.error?.code === expectedCode,
-        `expected ${expectedCode} for free circle ${label}, got ${JSON.stringify(body)}`,
+        body.error?.code === 'QUOTA_EXCEEDED',
+        `expected QUOTA_EXCEEDED for free circle ${label}, got ${JSON.stringify(body)}`,
       );
     }
 
@@ -204,13 +203,21 @@ Deno.test(
 Deno.test(
   'CC-8 export-log: free circle, forged body field, and expired entitlement are all refused with 402 QUOTA_EXCEEDED before reading data',
   async () => {
+    // Loaded dynamically because `export-log/handler.ts` is added in PR #46 (CC-7).
+    const exportLogModulePath = '../export-log/handler.ts';
+    const exportMod = (await import(exportLogModulePath)) as {
+      createExportLogHandler: (
+        deps: Record<string, unknown>,
+      ) => (req: Request) => Promise<Response>;
+    };
+
     for (const scenario of [
       { name: 'free circle (no entitlement row)', entitlementRow: null },
       {
         name: 'expired entitlement (active: true, expires_at in the past)',
         entitlementRow: {
           user_id: OWNER_ID,
-          entitlement: 'carecircle_family' as const,
+          entitlement: 'carecircle_family',
           active: true,
           expires_at: '2026-11-17T00:00:00.000Z',
         },
@@ -218,7 +225,7 @@ Deno.test(
     ]) {
       let dataReadCalls = 0;
 
-      const handler = createExportLogHandler({
+      const handler = exportMod.createExportLogHandler({
         verifyJwt: async () => ({ userId: OWNER_ID }),
         store: {
           async isCircleMember() {

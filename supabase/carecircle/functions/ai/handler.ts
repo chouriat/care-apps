@@ -648,6 +648,19 @@ export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
         circleId = parsedVisit.data.circleId.toLowerCase();
       }
 
+      let planCheck: ServerEntitlementVerification;
+      try {
+        planCheck = await checkCircleFamilyEntitlement({ circleId, now: new Date(now()) });
+      } catch {
+        return fail('PROVIDER_ERROR', 'Entitlement check unavailable.', true, 503);
+      }
+      if (!planCheck.allowed) {
+        if (planCheck.reason === 'STORE_ERROR') {
+          return fail('PROVIDER_ERROR', 'Entitlement check unavailable.', true, 503);
+        }
+        return fail('QUOTA_EXCEEDED', 'Family plan required for visit summaries.', false, 402);
+      }
+
       let hasAccess = false;
       try {
         hasAccess = await checkPrescriptionCircleAccess({ userId: authUser.userId, circleId });
@@ -671,19 +684,6 @@ export function createAiGatewayHandler(deps: AiGatewayDeps = {}) {
         if (!medsBelong) {
           return fail('INPUT_INVALID', 'Invalid knownMeds for circle.', false, 400);
         }
-      }
-
-      let planCheck: ServerEntitlementVerification;
-      try {
-        planCheck = await checkCircleFamilyEntitlement({ circleId, now: new Date(now()) });
-      } catch {
-        return fail('PROVIDER_ERROR', 'Entitlement check unavailable.', true, 503);
-      }
-      if (!planCheck.allowed) {
-        if (planCheck.reason === 'STORE_ERROR') {
-          return fail('PROVIDER_ERROR', 'Entitlement check unavailable.', true, 503);
-        }
-        return fail('QUOTA_EXCEEDED', 'Family plan required for visit summaries.', false, 402);
       }
 
       if (audioPath !== undefined) {
