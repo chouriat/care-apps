@@ -42,11 +42,39 @@ adb push /tmp/rx-test.jpg /sdcard/DCIM/Camera/rx-test.jpg >/dev/null 2>&1 || tru
 adb shell content call --uri content://media/ --method scan_file --arg /sdcard/Pictures/rx-test.jpg >/dev/null 2>&1 || true
 adb shell content call --uri content://media/ --method scan_file --arg /sdcard/DCIM/Camera/rx-test.jpg >/dev/null 2>&1 || true
 adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///sdcard/Pictures/rx-test.jpg >/dev/null 2>&1 || true
+# Grant Family entitlement in the local CI DB only for the visit-note-typed.yaml test user so
+# summarizeVisit passes the server-side Family plan check during the Maestro E2E run.
+DB_CONTAINER="$(docker ps --filter 'name=supabase_db' --format '{{.Names}}' | head -n 1)"
+if [ -n "$DB_CONTAINER" ]; then
+  docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres >/dev/null 2>&1 <<'SQL' || true
+create or replace function public.ci_auto_grant_family_for_visit_e2e()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.email = 'caregiver-visit@example.com' then
+    insert into public.entitlements (user_id, entitlement, active)
+    values (new.id, 'carecircle_family', true)
+    on conflict (user_id, entitlement) do update set active = true;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists ci_auto_grant_family_trigger on auth.users;
+create trigger ci_auto_grant_family_trigger
+  after insert on auth.users
+  for each row
+  execute function public.ci_auto_grant_family_for_visit_e2e();
+SQL
+fi
 adb logcat -c
 if maestro test apps/carecircle/maestro/sign-in-magic-link.yaml && \
    maestro test apps/carecircle/maestro/invite-join-circle.yaml && \
    maestro test apps/carecircle/maestro/meds-crud.yaml && \
-   maestro test apps/carecircle/maestro/scan-confirm.yaml; then
+   maestro test apps/carecircle/maestro/scan-confirm.yaml && \
+   maestro test apps/carecircle/maestro/visit-note-typed.yaml; then
   exit 0
 fi
 echo "::group::App log (ReactNativeJS, crashes)"

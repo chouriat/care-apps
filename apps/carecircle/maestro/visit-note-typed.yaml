@@ -1,0 +1,81 @@
+# CC-5b: Typed visit note, fake AI summary in CI, accept follow-up, reject med change, save, and verify task appears on Today.
+appId: app.carecircle.mobile
+env:
+  CAREGIVER_EMAIL: caregiver-visit@example.com
+  MAILPIT_URL: http://127.0.0.1:54324
+---
+- runScript: scripts/clear-mailpit.js
+- runScript: scripts/today-date.js
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: 'sign-in-screen'
+- tapOn:
+    id: 'sign-in-email-input'
+- inputText: ${CAREGIVER_EMAIL}
+- hideKeyboard
+- tapOn: '(?i).*magic link.*'
+- assertVisible:
+    id: 'sign-in-magic-link-sent'
+- retry:
+    maxRetries: 5
+    commands:
+      - runScript: scripts/magic-link-from-mailpit.js
+- openLink: ${output.callbackUrl}
+- assertVisible:
+    id: 'onboarding-start-screen'
+- tapOn:
+    id: 'onboarding-circle-name-input'
+- inputText: 'Visit Care Circle'
+- hideKeyboard
+- tapOn:
+    id: 'onboarding-recipient-name-input'
+- inputText: 'Evelyn'
+- hideKeyboard
+- tapOn:
+    id: 'onboarding-timezone-input'
+- eraseText
+- inputText: 'UTC'
+- hideKeyboard
+- tapOn:
+    id: 'onboarding-submit-button'
+- assertVisible:
+    id: 'today-empty-state'
+- assertVisible:
+    id: 'today-new-visit-note-button'
+- tapOn:
+    id: 'today-new-visit-note-button'
+- assertVisible:
+    id: 'visit-new-screen'
+- assertVisible:
+    id: 'visit-not-medical-advice'
+- tapOn:
+    id: 'visit-notes-text-input'
+- inputText: 'Blood pressure is stable. Book a blood test.'
+- hideKeyboard
+- tapOn:
+    id: 'visit-summarise-button'
+- assertVisible:
+    id: 'visit-draft-review'
+- tapOn:
+    id: 'visit-followup-due-date-0'
+- eraseText
+- inputText: ${output.todayIso}
+- hideKeyboard
+- tapOn:
+    id: 'visit-followup-accept-0'
+- scrollUntilVisible:
+    element:
+      id: 'visit-med-change-reject-0'
+    direction: DOWN
+- tapOn:
+    id: 'visit-med-change-reject-0'
+- scrollUntilVisible:
+    element:
+      id: 'visit-save-button'
+    direction: DOWN
+- tapOn:
+    id: 'visit-save-button'
+- assertVisible:
+    id: 'today-screen'
+- assertVisible: 'Book blood test'

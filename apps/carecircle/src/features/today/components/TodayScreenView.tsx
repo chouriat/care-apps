@@ -35,6 +35,7 @@ export interface TodayScreenViewProps {
   onCheckOffDose?: (doseEventId: string, status: TodayDoseStatusAction) => void;
   onOpenAppointment?: (appointmentId: string) => void;
   onOpenTask?: (taskId: string) => void;
+  onNewVisitNote?: (appointmentId?: string) => void;
 }
 
 function doseStatusLabel(status: DoseStatus): string {
@@ -75,6 +76,7 @@ export function TodayScreenView({
   onCheckOffDose,
   onOpenAppointment,
   onOpenTask,
+  onNewVisitNote,
 }: TodayScreenViewProps) {
   const { colors, spacing, typography } = useTheme();
   // Unknown role: no edit buttons (the server refuses a viewer's writes anyway).
@@ -84,6 +86,17 @@ export function TodayScreenView({
     <Screen accessibilityLabel={en.today.title}>
       <View testID="today-screen" style={[styles.container, { gap: spacing.md }]}>
         <Header title={en.today.title} subtitle={circleTitle} />
+
+        {!isLoading && canEditDoses ? (
+          <View testID="today-new-visit-note-button">
+            <Button
+              label={en.today.newVisitNoteCta}
+              accessibilityLabel={en.today.newVisitNoteA11y}
+              variant="secondary"
+              onPress={() => onNewVisitNote?.()}
+            />
+          </View>
+        ) : null}
 
         {isLoading ? (
           <View testID="today-loading">
