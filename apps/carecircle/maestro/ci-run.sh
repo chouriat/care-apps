@@ -18,7 +18,8 @@ adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:
 adb logcat -c
 if maestro test apps/carecircle/maestro/sign-in-magic-link.yaml && \
    maestro test apps/carecircle/maestro/invite-join-circle.yaml && \
-   maestro test apps/carecircle/maestro/meds-crud.yaml; then
+   maestro test apps/carecircle/maestro/meds-crud.yaml && \
+   maestro test apps/carecircle/maestro/appointments-crud.yaml; then
   exit 0
 fi
 echo "::group::App log (ReactNativeJS, crashes)"
