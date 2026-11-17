@@ -1237,7 +1237,11 @@ export function VisitNoteScreen({
         {en.common.notMedicalAdvice}
       </Text>
 
-      <PaywallSheet visible={paywallVisible} onClose={() => setPaywallVisible(false)} />
+      <PaywallSheet
+        visible={paywallVisible}
+        trigger="visit_note"
+        onClose={() => setPaywallVisible(false)}
+      />
     </ScrollView>
   );
 }

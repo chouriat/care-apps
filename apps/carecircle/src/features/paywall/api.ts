@@ -1,6 +1,7 @@
 import {
   CARECIRCLE_FAMILY_ENTITLEMENT,
   createPaywallController,
+  validateAnalyticsEvent,
   type CareCircleEntitlementId,
   type EntitlementReadStore,
   type EntitlementRow,
@@ -113,9 +114,78 @@ export async function syncRevenueCatAuthUser(userId: string | null): Promise<voi
   }
 }
 
+export type PaywallTrigger = 'members' | 'visit_note' | 'pdf_export' | 'circles' | 'settings';
+
+export function trackPaywallViewed(trigger: PaywallTrigger): void {
+  const payload = validateAnalyticsEvent('cc_paywall_viewed', { trigger });
+  void getAppObservability()
+    .analytics.track('cc_paywall_viewed', payload as { trigger: PaywallTrigger })
+    .catch(() => undefined);
+}
+
 export interface FamilyOfferInfo {
   priceText: string | null;
   hasIntroOffer: boolean;
+}
+
+// INTRO_ELIGIBILITY_STATUS.INTRO_ELIGIBILITY_STATUS_ELIGIBLE === 2 in @revenuecat/purchases-typescript-internal
+const RC_INTRO_ELIGIBILITY_STATUS_ELIGIBLE = 2;
+
+// RevenueCat trial & introductory price eligibility rules (checked 2026-11-17):
+// - iOS (`Purchases.checkTrialOrIntroductoryPriceEligibility([productIdentifier])`):
+//   Only show "Start free trial" when the product has `introPrice` AND
+//   `checkTrialOrIntroductoryPriceEligibility` returns `INTRO_ELIGIBILITY_STATUS_ELIGIBLE` (2).
+//   When status is `UNKNOWN` (0), `INELIGIBLE` (1), or `NO_INTRO_OFFER_EXISTS` (3), RevenueCat's
+//   guidance is to display non-introductory pricing ("Subscribe") to avoid misleading users:
+//   https://www.revenuecat.com/docs/subscription-guidance/subscription-offers/ios-subscription-offers#checking-eligibility (checked 2026-11-17)
+// - Android (Google Play):
+//   `checkTrialOrIntroductoryPriceEligibility` always returns `UNKNOWN` on Android; instead,
+//   Google Play's BillingClient populates `product.defaultOption.freePhase` / `introPhase` only
+//   when the Google account is eligible for the free trial or introductory phase:
+//   https://www.revenuecat.com/docs/subscription-guidance/subscription-offers/google-play-offers (checked 2026-11-17)
+export async function getFamilyOffer(platformOs: string = Platform.OS): Promise<FamilyOfferInfo> {
+  const offerings = await Purchases.getOfferings();
+  const pkg = selectFamilyPackage(offerings);
+  if (!pkg) {
+    return { priceText: null, hasIntroOffer: false };
+  }
+  const priceText = formatPackagePriceText(pkg);
+  const product = pkg.product;
+  if (!product) {
+    return { priceText, hasIntroOffer: false };
+  }
+
+  if (platformOs === 'ios') {
+    if (!product.introPrice || !product.identifier) {
+      return { priceText, hasIntroOffer: false };
+    }
+    if (typeof Purchases.checkTrialOrIntroductoryPriceEligibility !== 'function') {
+      return { priceText, hasIntroOffer: Boolean(product.introPrice) };
+    }
+    try {
+      const eligibilityMap = await Purchases.checkTrialOrIntroductoryPriceEligibility([
+        product.identifier,
+      ]);
+      const entry = eligibilityMap?.[product.identifier];
+      const eligibleStatus =
+        Purchases.INTRO_ELIGIBILITY_STATUS?.INTRO_ELIGIBILITY_STATUS_ELIGIBLE ??
+        RC_INTRO_ELIGIBILITY_STATUS_ELIGIBLE;
+      return {
+        priceText,
+        hasIntroOffer: entry?.status === eligibleStatus,
+      };
+    } catch {
+      return { priceText, hasIntroOffer: false };
+    }
+  }
+
+  // Android: check what RevenueCat's Google Play product defaultOption says
+  const hasAndroidIntro = Boolean(
+    product.defaultOption?.freePhase ||
+      product.defaultOption?.introPhase ||
+      (product.defaultOption === undefined && product.introPrice),
+  );
+  return { priceText, hasIntroOffer: hasAndroidIntro };
 }
 
 // RevenueCat Offerings & Displaying Products (`Purchases.getOfferings()`, `offering.monthly`,
@@ -158,21 +228,6 @@ function formatPackagePriceText(pkg: PurchasesPackage): string | null {
     return `${rawPrice} / week`;
   }
   return rawPrice;
-}
-
-export async function getFamilyOffer(): Promise<FamilyOfferInfo> {
-  const offerings = await Purchases.getOfferings();
-  const pkg = selectFamilyPackage(offerings);
-  if (!pkg) {
-    return { priceText: null, hasIntroOffer: false };
-  }
-  const priceText = formatPackagePriceText(pkg);
-  const hasIntroOffer = Boolean(
-    pkg.product?.introPrice ||
-      pkg.product?.defaultOption?.freePhase ||
-      pkg.product?.defaultOption?.introPhase,
-  );
-  return { priceText, hasIntroOffer };
 }
 
 // Final Terms of Use and Privacy Policy URLs will be supplied by Taha before CC-8 / store release.

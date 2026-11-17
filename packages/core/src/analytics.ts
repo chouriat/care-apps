@@ -1,7 +1,14 @@
 export type MemberRoleMetric = 'owner' | 'helper' | 'viewer';
 export type MedAddedSourceMetric = 'manual' | 'photo';
 export type DoseActionStatusMetric = 'given' | 'skipped';
-export type PaywallTriggerMetric = 'member_limit' | 'visit_note_ai' | 'pdf_export' | 'settings';
+export type PaywallTriggerMetric =
+  | 'members'
+  | 'visit_note'
+  | 'pdf_export'
+  | 'circles'
+  | 'settings'
+  | 'member_limit'
+  | 'visit_note_ai';
 export type EntitlementMetric = 'carecircle_family';
 
 /**
@@ -116,7 +123,15 @@ const EVENT_PROPERTY_RULES: {
     trigger: {
       kind: 'enum',
       required: false,
-      values: ['member_limit', 'visit_note_ai', 'pdf_export', 'settings'],
+      values: [
+        'members',
+        'visit_note',
+        'pdf_export',
+        'circles',
+        'settings',
+        'member_limit',
+        'visit_note_ai',
+      ],
     },
   },
   cc_trial_started: {

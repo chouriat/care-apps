@@ -5,7 +5,6 @@ import type { ReactNode } from 'react';
 import { Share } from 'react-native';
 import CircleRoute from '../app/circle';
 import CareLogRoute from '../app/log';
-import en from '../i18n/en.json';
 import * as ObservabilityApi from './features/observability/api';
 
 const CIRCLE_ID = 'c1c00001-0000-4000-8000-000000000001';
