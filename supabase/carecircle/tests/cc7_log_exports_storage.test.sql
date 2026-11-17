@@ -6,7 +6,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, storage, extensions;
 
-select plan(20);
+select plan(19);
 
 -- 1. Bucket `log-exports` configuration
 select is(
