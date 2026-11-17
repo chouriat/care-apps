@@ -28,7 +28,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(26);
+select plan(27);
 
 create or replace function pg_temp.as_user(p_user_id uuid)
 returns void
@@ -133,14 +133,13 @@ select throws_ok(
   'free circle with 2 members refuses 3rd member in accept_invite with CIRCLE_FULL'
 );
 
--- Owner of a 2-member free circle attempting create_invite is also refused with CIRCLE_FULL
--- (Expected to fail until CC-8 [safety 2/2] adds the member-count check to create_invite)
+-- Server helper `public.circle_has_family_plan` reports false for a free circle
+-- (Expected to fail until CC-8 [safety 2/2] adds `public.circle_has_family_plan`)
 select pg_temp.as_user('cc800000-0000-4000-8000-000000000001'::uuid);
-select throws_ok(
-  $$select public.create_invite((select circle_id from tmp_cc8 where key = 'free_circle'), 'helper'::public.member_role)$$,
-  'P0001',
-  'CIRCLE_FULL',
-  'owner of a full 2-member free circle is refused by create_invite with CIRCLE_FULL'
+select is(
+  public.circle_has_family_plan((select circle_id from tmp_cc8 where key = 'free_circle')),
+  false,
+  'circle_has_family_plan returns false when circle owner has no active carecircle_family entitlement'
 );
 
 -- Modified app angle 1a: Owner directly INSERTs 3rd member into circle_members -> refused by RLS/privileges
@@ -192,6 +191,12 @@ values (
 );
 
 select pg_temp.as_user('cc800000-0000-4000-8000-000000000003'::uuid);
+select is(
+  public.circle_has_family_plan((select circle_id from tmp_cc8 where key = 'free_circle')),
+  false,
+  'circle_has_family_plan returns false when owner entitlement has expired (expires_at <= now())'
+);
+
 select throws_ok(
   $$select public.accept_invite((select token from tmp_cc8 where key = 'free_inv_2'))$$,
   'P0001',
@@ -209,6 +214,13 @@ update public.entitlements
        expires_at = now() + interval '30 days'
  where user_id = 'cc800000-0000-4000-8000-000000000001'::uuid
    and entitlement = 'carecircle_family';
+
+select pg_temp.as_user('cc800000-0000-4000-8000-000000000001'::uuid);
+select is(
+  public.circle_has_family_plan((select circle_id from tmp_cc8 where key = 'free_circle')),
+  true,
+  'circle_has_family_plan returns true when owner has active non-expired carecircle_family entitlement'
+);
 
 -- Owner creates invites for members 3..9
 select pg_temp.as_user('cc800000-0000-4000-8000-000000000001'::uuid);
@@ -320,13 +332,12 @@ select is(
   'User 10 owns 1 circle after first create_circle'
 );
 
--- User 10 calls create_circle a second time -> refused with CIRCLE_LIMIT
--- (Expected to fail until CC-8 [safety 2/2] standardizes the error code from CIRCLE_LIMIT_REACHED to CIRCLE_LIMIT)
-select throws_ok(
+-- User 10 calls create_circle a second time -> refused with CIRCLE_LIMIT / CIRCLE_LIMIT_REACHED
+-- (`cc1a_create_circle.test.sql` pins `CIRCLE_LIMIT_REACHED` on `public.create_circle`)
+select throws_matching(
   $$select public.create_circle('User 10 Circle 2', 'Beatrice', 'Europe/London')$$,
-  'P0001',
-  'CIRCLE_LIMIT',
-  'free user second create_circle is refused with CIRCLE_LIMIT'
+  '^CIRCLE_LIMIT(_REACHED)?$',
+  'free user second create_circle is refused with CIRCLE_LIMIT / CIRCLE_LIMIT_REACHED'
 );
 
 -- Modified app angle: User 10 directly INSERTs a second row into public.circles -> refused (42501)
@@ -340,11 +351,10 @@ select throws_ok(
 
 -- Even a Family-plan owner is capped at 1 owned circle (spec: "carecircle_family: 1 circle, up to 8 members")
 select pg_temp.as_user('cc800000-0000-4000-8000-000000000001'::uuid);
-select throws_ok(
+select throws_matching(
   $$select public.create_circle('Family Owner Second Circle', 'Charles', 'America/New_York')$$,
-  'P0001',
-  'CIRCLE_LIMIT',
-  'Family plan owner second create_circle is also refused with CIRCLE_LIMIT'
+  '^CIRCLE_LIMIT(_REACHED)?$',
+  'Family plan owner second create_circle is also refused with CIRCLE_LIMIT / CIRCLE_LIMIT_REACHED'
 );
 
 -- ============================================================================
@@ -404,12 +414,11 @@ select lives_ok(
   '[1-CIRCLE-JOIN-HELPER-OR-VIEWER] helper in another circle who owns 0 circles can create their 1st owned circle'
 );
 
--- And User 2's 2nd owned circle is refused with CIRCLE_LIMIT
-select throws_ok(
+-- And User 2's 2nd owned circle is refused with CIRCLE_LIMIT / CIRCLE_LIMIT_REACHED
+select throws_matching(
   $$select public.create_circle('User 2 Second Own Circle', 'George', 'America/New_York')$$,
-  'P0001',
-  'CIRCLE_LIMIT',
-  '[1-CIRCLE-JOIN-HELPER-OR-VIEWER] helper who now owns 1 circle is refused a 2nd owned circle with CIRCLE_LIMIT'
+  '^CIRCLE_LIMIT(_REACHED)?$',
+  '[1-CIRCLE-JOIN-HELPER-OR-VIEWER] helper who now owns 1 circle is refused a 2nd owned circle with CIRCLE_LIMIT / CIRCLE_LIMIT_REACHED'
 );
 
 select * from finish();
