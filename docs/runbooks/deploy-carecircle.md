@@ -165,19 +165,18 @@ Because merged migrations are never edited or deleted, any rollback is applied a
 
 ### 6.4 Undo `20261116000004_log_exports_storage.sql`
 - **How to undo:**
-  1. Empty the `log-exports` bucket via the Storage API (`DELETE /storage/v1/object/log-exports`).
-  2. Unschedule the cron job, drop the helper RPC, and remove the bucket row:
+  1. Empty and delete the `log-exports` bucket through the Supabase Storage API (`POST /storage/v1/bucket/log-exports/empty`, then `DELETE /storage/v1/bucket/log-exports` with `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>`), or in **Supabase Dashboard > Storage > `log-exports` > Empty bucket**, then **Delete bucket**. Never delete Storage buckets or objects with direct SQL (`delete from storage.buckets ...` is refused by newer Storage versions and leaves underlying files behind).
+  2. Unschedule the cron job and drop the helper RPC:
      ```sql
      select cron.unschedule('carecircle-cleanup-log-exports-daily');
      drop function if exists public.list_expired_log_exports(integer);
-     delete from storage.buckets where id = 'log-exports';
      ```
 - **Data loss:** **Loses any temporary care-log export PDFs currently stored in `log-exports`** (these are transient 24-hour files generated on demand from `public.log_entries`; the underlying care log rows in `public.log_entries` are untouched).
 
 ### 6.5 Undo `20261116000003_visit_audio_storage.sql`
 - **How to undo:**
-  1. Empty the `visit-audio` bucket via the Storage API (`DELETE /storage/v1/object/visit-audio`).
-  2. Unschedule the cron job, drop the `storage.objects` policies and helper functions, and remove the bucket row:
+  1. Empty and delete the `visit-audio` bucket through the Supabase Storage API (`POST /storage/v1/bucket/visit-audio/empty`, then `DELETE /storage/v1/bucket/visit-audio` with `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>`), or in **Supabase Dashboard > Storage > `visit-audio` > Empty bucket**, then **Delete bucket**. Never delete Storage buckets or objects with direct SQL (`delete from storage.buckets ...` is refused by newer Storage versions and leaves underlying files behind).
+  2. Unschedule the cron job and drop the `storage.objects` policies and helper functions:
      ```sql
      select cron.unschedule('carecircle-cleanup-visit-audio-daily');
      drop function if exists public.list_expired_visit_audio(integer);
@@ -185,6 +184,5 @@ Because merged migrations are never edited or deleted, any rollback is applied a
      drop policy if exists visit_audio_select_for_delete_owner_helper on storage.objects;
      drop policy if exists visit_audio_delete_owner_helper on storage.objects;
      drop function if exists public.visit_audio_circle_id(text);
-     delete from storage.buckets where id = 'visit-audio';
      ```
 - **Data loss:** **Loses any in-flight visit-note `.m4a` audio recordings currently in `visit-audio`** (transient recordings awaiting transcription; saved visit notes in `public.visit_notes` are untouched).
