@@ -1,5 +1,14 @@
 import type { LogType } from '@carecircle/core';
-import { Button, Card, Chip, EmptyState, ErrorState, Header, useTheme } from '@carecircle/ui';
+import {
+  Button,
+  Card,
+  Chip,
+  EmptyState,
+  ErrorState,
+  Header,
+  MIN_TOUCH_TARGET_PT,
+  useTheme,
+} from '@carecircle/ui';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import en from '../../../../i18n/en.json';
 import {
@@ -22,6 +31,7 @@ export interface CareLogScreenViewProps {
   isLoading: boolean;
   isLoadingMore: boolean;
   hasError: boolean;
+  isOffline?: boolean;
   onRetry: () => void;
   onLoadMore: () => void;
   exportFrom: string;
@@ -63,6 +73,7 @@ export function CareLogScreenView({
   isLoading,
   isLoadingMore,
   hasError,
+  isOffline = false,
   onRetry,
   onLoadMore,
   exportFrom,
@@ -104,7 +115,18 @@ export function CareLogScreenView({
         </View>
       ) : null}
 
-      {hasError && !isLoading ? (
+      {isOffline && !isLoading ? (
+        <View testID="care-log-offline">
+          <ErrorState
+            title={en.careLog.offlineTitle}
+            message={en.careLog.offlineMessage}
+            retryLabel={en.careLog.retry}
+            onRetry={onRetry}
+          />
+        </View>
+      ) : null}
+
+      {hasError && !isOffline && !isLoading ? (
         <View testID="care-log-error">
           <ErrorState
             title={en.careLog.errorTitle}
@@ -115,7 +137,7 @@ export function CareLogScreenView({
         </View>
       ) : null}
 
-      {!isLoading && !hasError ? (
+      {!isLoading && !hasError && !isOffline ? (
         <>
           <Card>
             <View style={{ gap: spacing.sm }}>
@@ -230,6 +252,7 @@ export function CareLogScreenView({
                 <View testID="care-log-filter-type-all">
                   <Chip
                     label={en.careLog.filterAllTypes}
+                    accessibilityLabel={`${en.careLog.filterTypeHeading}: ${en.careLog.filterAllTypes}`}
                     selected={selectedType === null}
                     onPress={() => onSelectType(null)}
                   />
@@ -238,6 +261,7 @@ export function CareLogScreenView({
                   <View key={type} testID={`care-log-filter-type-${type}`}>
                     <Chip
                       label={logTypeLabelFor(type)}
+                      accessibilityLabel={`${en.careLog.filterTypeHeading}: ${logTypeLabelFor(type)}`}
                       selected={selectedType === type}
                       onPress={() => onSelectType(type)}
                     />
@@ -259,6 +283,7 @@ export function CareLogScreenView({
                 <View testID="care-log-filter-person-all">
                   <Chip
                     label={en.careLog.filterAllPeople}
+                    accessibilityLabel={`${en.careLog.filterPersonHeading}: ${en.careLog.filterAllPeople}`}
                     selected={selectedPersonId === null}
                     onPress={() => onSelectPerson(null)}
                   />
@@ -267,6 +292,7 @@ export function CareLogScreenView({
                   <View key={member.userId} testID={`care-log-filter-person-${member.userId}`}>
                     <Chip
                       label={member.displayName}
+                      accessibilityLabel={`${en.careLog.filterPersonHeading}: ${member.displayName}`}
                       selected={selectedPersonId === member.userId}
                       onPress={() => onSelectPerson(member.userId)}
                     />
@@ -369,7 +395,8 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    minHeight: 44,
+    minHeight: MIN_TOUCH_TARGET_PT,
+    minWidth: MIN_TOUCH_TARGET_PT,
   },
   chipRow: {
     flexDirection: 'row',

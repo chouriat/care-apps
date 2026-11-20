@@ -31,6 +31,113 @@ export function resolveDefaultTimezone(
   return 'UTC';
 }
 
+export const FALLBACK_IANA_TIMEZONES: ReadonlyArray<string> = [
+  'UTC',
+  'Europe/Paris',
+  'Europe/London',
+  'Europe/Berlin',
+  'Europe/Madrid',
+  'Europe/Rome',
+  'Europe/Brussels',
+  'Europe/Zurich',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'America/Toronto',
+  'America/Vancouver',
+  'America/Sao_Paulo',
+  'Africa/Tunis',
+  'Africa/Casablanca',
+  'Africa/Cairo',
+  'Asia/Dubai',
+  'Asia/Kolkata',
+  'Asia/Singapore',
+  'Asia/Tokyo',
+  'Asia/Seoul',
+  'Australia/Sydney',
+  'Pacific/Auckland',
+];
+
+type SupportedValuesOfFn = (key: 'timeZone') => string[];
+
+export function getSupportedIanaTimezones(
+  deviceTimezone?: string,
+  supportedValuesOf?: SupportedValuesOfFn | null,
+): string[] {
+  const defaultZone =
+    deviceTimezone && isValidIanaTimezone(deviceTimezone)
+      ? deviceTimezone.trim()
+      : resolveDefaultTimezone();
+
+  const intlWithSupported = Intl as unknown as {
+    supportedValuesOf?: SupportedValuesOfFn;
+  };
+  const fn =
+    supportedValuesOf === undefined ? intlWithSupported.supportedValuesOf : supportedValuesOf;
+
+  let rawList: ReadonlyArray<string> = FALLBACK_IANA_TIMEZONES;
+  if (typeof fn === 'function') {
+    try {
+      const candidate = fn.call(Intl, 'timeZone');
+      if (Array.isArray(candidate) && candidate.length > 0) {
+        rawList = candidate;
+      }
+    } catch {
+      rawList = FALLBACK_IANA_TIMEZONES;
+    }
+  }
+
+  const seen = new Set<string>([defaultZone]);
+  const ordered: string[] = [defaultZone];
+  for (const tz of rawList) {
+    if (typeof tz === 'string') {
+      const trimmed = tz.trim();
+      if (trimmed && !seen.has(trimmed)) {
+        seen.add(trimmed);
+        ordered.push(trimmed);
+      }
+    }
+  }
+  if (!seen.has('UTC')) {
+    ordered.push('UTC');
+  }
+  return ordered;
+}
+
+export function filterIanaTimezones(
+  query: string,
+  deviceTimezone?: string,
+  options?: {
+    maxResults?: number;
+    supportedValuesOf?: SupportedValuesOfFn | null;
+  },
+): string[] {
+  const all = getSupportedIanaTimezones(deviceTimezone, options?.supportedValuesOf);
+  const maxResults = options?.maxResults ?? 12;
+  const trimmed = query.trim();
+  const defaultZone = all[0] ?? 'UTC';
+
+  // When the input is empty or still holds the default/exact selected zone, show the device zone
+  // first followed by common zones so the picker offers quick selection alongside search.
+  if (!trimmed || trimmed.toLowerCase() === defaultZone.toLowerCase()) {
+    const quickSet = new Set<string>([defaultZone]);
+    const quickList: string[] = [defaultZone];
+    for (const tz of [...FALLBACK_IANA_TIMEZONES, ...all]) {
+      if (!quickSet.has(tz) && all.includes(tz)) {
+        quickSet.add(tz);
+        quickList.push(tz);
+        if (quickList.length >= maxResults) break;
+      }
+    }
+    return quickList;
+  }
+
+  const needle = trimmed.toLowerCase();
+  const matches = all.filter((tz) => tz.toLowerCase().includes(needle));
+  return matches.slice(0, maxResults);
+}
+
 // Built from the C1 `circleSchema` in `@carecircle/core` plus an IANA timezone check.
 export const createCircleFormSchema = circleSchema
   .pick({

@@ -1,4 +1,12 @@
-import { Button, Card, ErrorState, Header, MIN_TOUCH_TARGET_PT, useTheme } from '@carecircle/ui';
+import {
+  Button,
+  Card,
+  Chip,
+  ErrorState,
+  Header,
+  MIN_TOUCH_TARGET_PT,
+  useTheme,
+} from '@carecircle/ui';
 import { useCallback, useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -6,6 +14,7 @@ import en from '../../../../i18n/en.json';
 import { parseInviteToken, type AcceptInviteErrorCode } from '../../circle/api';
 import {
   createCircleFormSchema,
+  filterIanaTimezones,
   resolveDefaultTimezone,
   type CreateCircleErrorCode,
   type CreateCircleFormValues,
@@ -324,34 +333,58 @@ export function OnboardingStartScreen({
             <Controller
               control={control}
               name="timezone"
-              render={({ field: { value } }) => (
-                <TextInput
-                  testID="onboarding-timezone-input"
-                  accessibilityLabel={en.onboarding.timezoneLabel}
-                  placeholder={en.onboarding.timezonePlaceholder}
-                  placeholderTextColor={colors.textMuted}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  editable={!busy}
-                  value={value}
-                  onChangeText={(next) => {
-                    setValue('timezone', next);
-                    if (validationError) setValidationError(null);
-                  }}
-                  style={[
-                    styles.input,
-                    {
-                      backgroundColor: colors.surface,
-                      borderColor: colors.border,
-                      borderRadius: radii.md,
-                      color: colors.textPrimary,
-                      fontSize: typography.body.fontSize,
-                      paddingHorizontal: spacing.md,
-                      paddingVertical: spacing.sm,
-                    },
-                  ]}
-                />
-              )}
+              render={({ field: { value } }) => {
+                const matchingZones = filterIanaTimezones(value, initialTz);
+                return (
+                  <View style={{ gap: spacing.xs }}>
+                    <TextInput
+                      testID="onboarding-timezone-input"
+                      accessibilityLabel={en.onboarding.timezoneLabel}
+                      placeholder={en.onboarding.timezonePlaceholder}
+                      placeholderTextColor={colors.textMuted}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      editable={!busy}
+                      value={value}
+                      onChangeText={(next) => {
+                        setValue('timezone', next);
+                        if (validationError) setValidationError(null);
+                      }}
+                      style={[
+                        styles.input,
+                        {
+                          backgroundColor: colors.surface,
+                          borderColor: colors.border,
+                          borderRadius: radii.md,
+                          color: colors.textPrimary,
+                          fontSize: typography.body.fontSize,
+                          paddingHorizontal: spacing.md,
+                          paddingVertical: spacing.sm,
+                        },
+                      ]}
+                    />
+                    <View
+                      testID="onboarding-timezone-picker"
+                      style={[styles.timezonePickerRow, { gap: spacing.xs }]}
+                    >
+                      {matchingZones.map((tz) => (
+                        <View key={tz} testID={`onboarding-timezone-option-${tz}`}>
+                          <Chip
+                            label={tz}
+                            accessibilityLabel={`${en.onboarding.timezoneLabel}: ${tz}`}
+                            selected={value.trim() === tz}
+                            onPress={() => {
+                              if (busy) return;
+                              setValue('timezone', tz);
+                              if (validationError) setValidationError(null);
+                            }}
+                          />
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                );
+              }}
             />
 
             {validationError ? (
@@ -490,5 +523,9 @@ const styles = StyleSheet.create({
   statusBox: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  timezonePickerRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
   },
 });

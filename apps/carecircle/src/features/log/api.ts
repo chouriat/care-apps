@@ -37,6 +37,7 @@ export interface CareLogDeps {
   getClient?: () => ReturnType<typeof getSupabaseClient>;
   getUserId?: () => Promise<string | null>;
   now?: () => Date;
+  isOffline?: boolean;
   isFamilyPlan?: boolean;
   shareUrl?: (pdfUrl: string) => Promise<void>;
   trackLogExported?: (days: number) => void;
@@ -57,6 +58,7 @@ export type LoadCareLogContextResult =
     }
   | {
       ok: false;
+      isOffline: boolean;
     };
 
 export type FetchCareLogPageResult =
@@ -67,6 +69,7 @@ export type FetchCareLogPageResult =
     }
   | {
       ok: false;
+      isOffline: boolean;
     };
 
 export type ExportCareLogPdfResult =
@@ -77,8 +80,14 @@ export type ExportCareLogPdfResult =
     }
   | {
       ok: false;
-      errorCode: 'QUOTA_EXCEEDED' | 'RANGE_INVALID' | 'EXPORT_FAILED';
+      errorCode: 'QUOTA_EXCEEDED' | 'RANGE_INVALID' | 'NETWORK_ERROR' | 'EXPORT_FAILED';
+      isOffline: boolean;
     };
+
+function isNetworkFailureMessage(message: string, code?: string): boolean {
+  if (code === 'NETWORK_ERROR') return true;
+  return /network|fetch failed|failed to fetch|offline|load failed/i.test(message);
+}
 
 const DATE_ONLY_REGEX = /^(\d{4})-(\d{2})-(\d{2})$/;
 
@@ -204,13 +213,16 @@ async function resolveUserId(deps: CareLogDeps): Promise<string | null> {
 export async function loadCareLogContext(
   deps: CareLogDeps = {},
 ): Promise<LoadCareLogContextResult> {
+  if (deps.isOffline) {
+    return { ok: false, isOffline: true };
+  }
   const getClient = deps.getClient ?? getSupabaseClient;
   const now = deps.now ? deps.now() : new Date();
 
   try {
     const client = getClient();
     const userId = await resolveUserId(deps);
-    if (!userId) return { ok: false };
+    if (!userId) return { ok: false, isOffline: false };
 
     const circleRes = await client
       .from('circles')
@@ -219,7 +231,8 @@ export async function loadCareLogContext(
       .limit(1);
 
     if (circleRes.error || !Array.isArray(circleRes.data) || !circleRes.data[0]) {
-      return { ok: false };
+      const errMsg = circleRes.error?.message ?? '';
+      return { ok: false, isOffline: isNetworkFailureMessage(errMsg, circleRes.error?.code) };
     }
 
     const rawCircle = circleRes.data[0] as {
@@ -307,8 +320,9 @@ export async function loadCareLogContext(
       defaultFrom,
       defaultTo,
     };
-  } catch {
-    return { ok: false };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, isOffline: isNetworkFailureMessage(msg) };
   }
 }
 
@@ -323,6 +337,9 @@ export async function fetchCareLogPage(
   },
   deps: CareLogDeps = {},
 ): Promise<FetchCareLogPageResult> {
+  if (deps.isOffline) {
+    return { ok: false, isOffline: true };
+  }
   const getClient = deps.getClient ?? getSupabaseClient;
   const limit = input.limit ?? CARE_LOG_PAGE_SIZE;
 
@@ -345,7 +362,8 @@ export async function fetchCareLogPage(
       .range(input.offset, input.offset + limit - 1);
 
     if (res.error || !Array.isArray(res.data)) {
-      return { ok: false };
+      const errMsg = res.error?.message ?? '';
+      return { ok: false, isOffline: isNetworkFailureMessage(errMsg, res.error?.code) };
     }
 
     const rows = res.data as Array<{
@@ -377,8 +395,9 @@ export async function fetchCareLogPage(
       entries,
       hasMore: entries.length === limit,
     };
-  } catch {
-    return { ok: false };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, isOffline: isNetworkFailureMessage(msg) };
   }
 }
 
@@ -392,7 +411,10 @@ export async function exportCareLogPdf(
 ): Promise<ExportCareLogPdfResult> {
   const days = computeExportRangeDays(input.from, input.to);
   if (days === null) {
-    return { ok: false, errorCode: 'RANGE_INVALID' };
+    return { ok: false, errorCode: 'RANGE_INVALID', isOffline: false };
+  }
+  if (deps.isOffline) {
+    return { ok: false, errorCode: 'NETWORK_ERROR', isOffline: true };
   }
 
   const getClient = deps.getClient ?? getSupabaseClient;
@@ -425,14 +447,19 @@ export async function exportCareLogPdf(
 
     const errCode = data?.code ?? data?.error?.code ?? '';
     if (errCode === 'QUOTA_EXCEEDED' || /QUOTA_EXCEEDED|402/i.test(res.error?.message ?? '')) {
-      return { ok: false, errorCode: 'QUOTA_EXCEEDED' };
+      return { ok: false, errorCode: 'QUOTA_EXCEEDED', isOffline: false };
     }
     if (errCode === 'RANGE_INVALID' || /RANGE_INVALID/i.test(res.error?.message ?? '')) {
-      return { ok: false, errorCode: 'RANGE_INVALID' };
+      return { ok: false, errorCode: 'RANGE_INVALID', isOffline: false };
     }
 
     if (res.error || !data?.pdfUrl || typeof data.pdfUrl !== 'string') {
-      return { ok: false, errorCode: 'EXPORT_FAILED' };
+      const offline = isNetworkFailureMessage(res.error?.message ?? '', errCode);
+      return {
+        ok: false,
+        errorCode: offline ? 'NETWORK_ERROR' : 'EXPORT_FAILED',
+        isOffline: offline,
+      };
     }
 
     try {
@@ -452,7 +479,13 @@ export async function exportCareLogPdf(
       pdfUrl: data.pdfUrl,
       days,
     };
-  } catch {
-    return { ok: false, errorCode: 'EXPORT_FAILED' };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const offline = isNetworkFailureMessage(msg);
+    return {
+      ok: false,
+      errorCode: offline ? 'NETWORK_ERROR' : 'EXPORT_FAILED',
+      isOffline: offline,
+    };
   }
 }

@@ -390,12 +390,20 @@ export function defaultTrackVisitNoteSaved(counts: {
     .catch(() => undefined);
 }
 
+function isNetworkFailureMessage(message: string, code?: string): boolean {
+  if (code === 'NETWORK_ERROR') return true;
+  return /network|fetch failed|failed to fetch|offline|load failed/i.test(message);
+}
+
 export async function loadVisitNoteContext(deps: SummarizeVisitApiDeps = {}): Promise<{
-  status: 'ok' | 'no_circle' | 'error';
+  status: 'ok' | 'no_circle' | 'offline' | 'error';
   circle: Circle | null;
   memberRole: MemberRole;
   activeMedications: Medication[];
 }> {
+  if (deps.isOffline) {
+    return { status: 'offline', circle: null, memberRole: 'viewer', activeMedications: [] };
+  }
   const mocks = loadCareCircleMocks(deps.env);
   if (mocks) {
     const snapshot = getOrInitMockTodaySnapshot(mocks);
@@ -419,7 +427,13 @@ export async function loadVisitNoteContext(deps: SummarizeVisitApiDeps = {}): Pr
       .limit(1);
 
     if (circlesRes.error) {
-      return { status: 'error', circle: null, memberRole: 'viewer', activeMedications: [] };
+      const offline = isNetworkFailureMessage(circlesRes.error.message, circlesRes.error.code);
+      return {
+        status: offline ? 'offline' : 'error',
+        circle: null,
+        memberRole: 'viewer',
+        activeMedications: [],
+      };
     }
 
     const circleRows = Array.isArray(circlesRes.data) ? circlesRes.data : [];
@@ -437,7 +451,15 @@ export async function loadVisitNoteContext(deps: SummarizeVisitApiDeps = {}): Pr
     ]);
 
     if (roleRes.error || medsRes.error) {
-      return { status: 'error', circle: null, memberRole: 'viewer', activeMedications: [] };
+      const errMsg = roleRes.error?.message ?? medsRes.error?.message ?? '';
+      const errCode = roleRes.error?.code ?? medsRes.error?.code;
+      const offline = isNetworkFailureMessage(errMsg, errCode);
+      return {
+        status: offline ? 'offline' : 'error',
+        circle: null,
+        memberRole: 'viewer',
+        activeMedications: [],
+      };
     }
 
     const medications = (Array.isArray(medsRes.data) ? medsRes.data : []).map((row) =>
@@ -450,8 +472,14 @@ export async function loadVisitNoteContext(deps: SummarizeVisitApiDeps = {}): Pr
       memberRole: roleRes.role,
       activeMedications: medications.filter((m) => m.active),
     };
-  } catch {
-    return { status: 'error', circle: null, memberRole: 'viewer', activeMedications: [] };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      status: isNetworkFailureMessage(msg) ? 'offline' : 'error',
+      circle: null,
+      memberRole: 'viewer',
+      activeMedications: [],
+    };
   }
 }
 
