@@ -16,7 +16,7 @@ Plain-language store copy for adult children caring for a parent. Describes only
 
 - **Short Description:** `Shared medication schedules, appointments, tasks & visit notes for your family.` (79 characters)
 
-## Keywords (9 keywords, Apple App Store 100-character keyword field)
+## Keywords (8 keywords, Apple App Store 100-character keyword field)
 
 - **Keywords list:**
   1. `caregiver`
@@ -25,10 +25,9 @@ Plain-language store copy for adult children caring for a parent. Describes only
   4. `medication log`
   5. `pill schedule`
   6. `doctor visits`
-  7. `elder care`
-  8. `care tasks`
-  9. `care log`
-- **Apple comma-separated string (98 characters):** `caregiver,family care,aging parent,medication log,pill schedule,doctor visits,elder care,care log`
+  7. `care tasks`
+  8. `care log`
+- **Apple comma-separated string (97 characters):** `caregiver,family care,aging parent,medication log,pill schedule,doctor visits,care tasks,care log`
 
 ---
 
