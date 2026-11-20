@@ -1,5 +1,14 @@
 import type { MemberRole, Task } from '@carecircle/core';
-import { Button, Card, Chip, EmptyState, ErrorState, Header, useTheme } from '@carecircle/ui';
+import {
+  Button,
+  Card,
+  Chip,
+  EmptyState,
+  ErrorState,
+  Header,
+  MIN_TOUCH_TARGET_PT,
+  useTheme,
+} from '@carecircle/ui';
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import en from '../../../../i18n/en.json';
@@ -239,7 +248,7 @@ export function TasksScreenView({
                 <Button
                   variant={isDone ? 'secondary' : 'primary'}
                   label={isDone ? en.tasks.uncompleteCta : en.tasks.completeCta}
-                  accessibilityLabel={isDone ? en.tasks.uncompleteCta : en.tasks.completeCta}
+                  accessibilityLabel={`${isDone ? en.tasks.uncompleteCta : en.tasks.completeCta} ${task.title}`}
                   onPress={() => {
                     void onToggleComplete?.(task.id, !isDone);
                   }}
@@ -468,6 +477,7 @@ export function TasksScreenView({
                     <View testID="tasks-assignee-option-none">
                       <Chip
                         label={en.tasks.assigneeNone}
+                        accessibilityLabel={`${en.tasks.assigneeLabel}: ${en.tasks.assigneeNone}`}
                         selected={draft.assignee === null}
                         onPress={() => setDraft((prev) => ({ ...prev, assignee: null }))}
                       />
@@ -477,6 +487,7 @@ export function TasksScreenView({
                         <View testID={`tasks-assignee-option-member-${idx}`}>
                           <Chip
                             label={member.displayName}
+                            accessibilityLabel={`${en.tasks.assigneeLabel}: ${member.displayName}`}
                             selected={draft.assignee === member.userId}
                             onPress={() =>
                               setDraft((prev) => ({ ...prev, assignee: member.userId }))
@@ -542,6 +553,7 @@ export function TasksScreenView({
                 <View testID="tasks-filter-everyone">
                   <Chip
                     label={en.tasks.filterEveryone}
+                    accessibilityLabel={`${en.tasks.filterHeading}: ${en.tasks.filterEveryone}`}
                     selected={assigneeFilter === 'everyone'}
                     onPress={() => setAssigneeFilter('everyone')}
                   />
@@ -549,6 +561,7 @@ export function TasksScreenView({
                 <View testID="tasks-filter-me">
                   <Chip
                     label={en.tasks.filterMe}
+                    accessibilityLabel={`${en.tasks.filterHeading}: ${en.tasks.filterMe}`}
                     selected={assigneeFilter === 'me'}
                     onPress={() => setAssigneeFilter('me')}
                   />
@@ -557,6 +570,7 @@ export function TasksScreenView({
                   <View key={member.userId} testID={`tasks-filter-person-${member.userId}`}>
                     <Chip
                       label={member.displayName}
+                      accessibilityLabel={`${en.tasks.filterHeading}: ${member.displayName}`}
                       selected={assigneeFilter === member.userId}
                       onPress={() => setAssigneeFilter(member.userId)}
                     />
@@ -565,6 +579,7 @@ export function TasksScreenView({
                 <View testID="tasks-filter-nobody">
                   <Chip
                     label={en.tasks.filterNobody}
+                    accessibilityLabel={`${en.tasks.filterHeading}: ${en.tasks.filterNobody}`}
                     selected={assigneeFilter === 'nobody'}
                     onPress={() => setAssigneeFilter('nobody')}
                   />
@@ -646,7 +661,8 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    minHeight: 44,
+    minHeight: MIN_TOUCH_TARGET_PT,
+    minWidth: MIN_TOUCH_TARGET_PT,
   },
   chipRow: {
     flexDirection: 'row',

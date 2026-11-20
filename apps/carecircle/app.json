@@ -19,6 +19,7 @@
       "expo-status-bar",
       "expo-secure-store",
       "expo-web-browser",
+      "expo-sharing",
       "expo-notifications",
       "@sentry/react-native/expo",
       [

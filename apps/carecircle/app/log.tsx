@@ -25,6 +25,7 @@ export default function CareLogRoute({ deps }: CareLogRouteProps = {}) {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [isOffline, setIsOffline] = useState(Boolean(deps?.isOffline));
   const [circleId, setCircleId] = useState('');
   const [circleName, setCircleName] = useState('');
   const [timezone, setTimezone] = useState('UTC');
@@ -53,9 +54,11 @@ export default function CareLogRoute({ deps }: CareLogRouteProps = {}) {
     const activeDeps = depsRef.current;
     setIsLoading(true);
     setHasError(false);
+    setIsOffline(Boolean(activeDeps?.isOffline));
     const ctx = await loadCareLogContext(activeDeps);
     if (!ctx.ok) {
-      setHasError(true);
+      setIsOffline(ctx.isOffline);
+      setHasError(!ctx.isOffline);
       setIsLoading(false);
       return;
     }
@@ -86,13 +89,15 @@ export default function CareLogRoute({ deps }: CareLogRouteProps = {}) {
     );
 
     if (!page.ok) {
-      setHasError(true);
+      setIsOffline(page.isOffline);
+      setHasError(!page.isOffline);
       setIsLoading(false);
       return;
     }
 
     setEntries(page.entries);
     setHasMore(page.hasMore);
+    setIsOffline(false);
     setIsLoading(false);
   }, [selectedPersonId, selectedType]);
 
@@ -118,7 +123,8 @@ export default function CareLogRoute({ deps }: CareLogRouteProps = {}) {
       setEntries((prev) => [...prev, ...page.entries]);
       setHasMore(page.hasMore);
     } else {
-      setHasError(true);
+      setIsOffline(page.isOffline);
+      setHasError(!page.isOffline);
     }
     setIsLoadingMore(false);
   }, [
@@ -164,7 +170,10 @@ export default function CareLogRoute({ deps }: CareLogRouteProps = {}) {
       );
 
       if (!res.ok) {
-        if (res.errorCode === 'QUOTA_EXCEEDED') {
+        if (res.isOffline) {
+          setIsOffline(true);
+          setExportError(en.careLog.offlineMessage);
+        } else if (res.errorCode === 'QUOTA_EXCEEDED') {
           openPaywall();
         } else if (res.errorCode === 'RANGE_INVALID') {
           setExportError(en.careLog.exportRangeInvalidMessage);
@@ -193,6 +202,7 @@ export default function CareLogRoute({ deps }: CareLogRouteProps = {}) {
         isLoading={isLoading}
         isLoadingMore={isLoadingMore}
         hasError={hasError}
+        isOffline={isOffline}
         onRetry={() => {
           void loadInitial();
         }}

@@ -5,6 +5,7 @@ import {
   circleSchema,
   doseEventRowSchema,
   doseEventSchema,
+  isNetworkFailureMessage,
   medicationRowSchema,
   medicationSchema,
   memberRoleSchema,
@@ -204,6 +205,59 @@ export function formatLocalTimeInZone(input: string | Date, timeZone: string): s
   return `${hour}:${minute.padStart(2, '0')}`;
 }
 
+/**
+ * Computes the number of milliseconds from `now` until the next local midnight (`00:00:00`)
+ * in the circle's IANA `timeZone`, so Today reloads as soon as the date in the circle's time zone rolls over.
+ */
+export function msUntilNextMidnightInZone(now: Date, timeZone: string): number {
+  const localDate = formatLocalDateInZone(now, timeZone);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(localDate);
+  if (!match) {
+    return 60_000;
+  }
+  const year = Number.parseInt(match[1] ?? '1970', 10);
+  const month = Number.parseInt(match[2] ?? '1', 10);
+  const day = Number.parseInt(match[3] ?? '1', 10);
+  const targetNextMidnightWallMs = Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0);
+
+  let formatter: Intl.DateTimeFormat;
+  try {
+    formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    });
+  } catch {
+    return Math.max(1_000, targetNextMidnightWallMs - now.getTime());
+  }
+
+  const getLocalWallMs = (utcMs: number): number => {
+    const parts = formatter.formatToParts(new Date(utcMs));
+    const y = Number.parseInt(parts.find((p) => p.type === 'year')?.value ?? '1970', 10);
+    const m = Number.parseInt(parts.find((p) => p.type === 'month')?.value ?? '1', 10);
+    const d = Number.parseInt(parts.find((p) => p.type === 'day')?.value ?? '1', 10);
+    const hRaw = Number.parseInt(parts.find((p) => p.type === 'hour')?.value ?? '0', 10);
+    const min = Number.parseInt(parts.find((p) => p.type === 'minute')?.value ?? '0', 10);
+    const sec = Number.parseInt(parts.find((p) => p.type === 'second')?.value ?? '0', 10);
+    const h = hRaw === 24 ? 0 : hRaw;
+    return Date.UTC(y, m - 1, d, h, min, sec, 0);
+  };
+
+  let guess = targetNextMidnightWallMs;
+  for (let i = 0; i < 3; i += 1) {
+    const diff = getLocalWallMs(guess) - targetNextMidnightWallMs;
+    if (diff === 0) break;
+    guess -= diff;
+  }
+
+  return Math.max(1_000, guess - now.getTime());
+}
+
 export function selectTodayAgenda(snapshot: TodaySnapshot, now: Date = new Date()): TodayAgenda {
   const timezone = snapshot.circle.timezone;
   const localDate = formatLocalDateInZone(now, timezone);
@@ -383,13 +437,6 @@ export async function loadCachedTodaySnapshot(
   } catch {
     return null;
   }
-}
-
-function isNetworkFailureMessage(message: string, code?: string): boolean {
-  if (code === 'NETWORK_ERROR') {
-    return true;
-  }
-  return /network|fetch failed|failed to fetch|offline|load failed/i.test(message);
 }
 
 function normalizeIsoTimestamp(value: unknown): unknown {
