@@ -155,6 +155,12 @@ function deleteAccountInMemory(
   return { ok: true, deletedCirclesCount: ownedCircles.length };
 }
 
+export const ACCOUNT_DELETION_BUCKETS = [
+  'prescription-photos',
+  'visit-audio',
+  'log-exports',
+] as const;
+
 async function deleteStoragePrefixObjects(
   fetchImpl: typeof fetch,
   baseUrl: string,
@@ -176,7 +182,7 @@ async function deleteStoragePrefixObjects(
     }),
   });
   if (!listRes.ok) {
-    return;
+    throw new Error(`storage list failed: ${listRes.status}`);
   }
   const items = (await listRes.json()) as Array<{ name?: unknown }>;
   if (!Array.isArray(items) || items.length === 0) {
@@ -191,7 +197,7 @@ async function deleteStoragePrefixObjects(
     return;
   }
 
-  await fetchImpl(`${baseUrl}/storage/v1/object/${bucket}`, {
+  const deleteRes = await fetchImpl(`${baseUrl}/storage/v1/object/${bucket}`, {
     method: 'DELETE',
     headers: {
       authorization: `Bearer ${serviceKey}`,
@@ -200,6 +206,9 @@ async function deleteStoragePrefixObjects(
     },
     body: JSON.stringify({ prefixes: objectPaths }),
   });
+  if (!deleteRes.ok) {
+    throw new Error(`storage delete failed: ${deleteRes.status}`);
+  }
 }
 
 export function createDeleteAccountHandler(deps: DeleteAccountDeps = {}) {
@@ -335,22 +344,18 @@ export function createDeleteAccountHandler(deps: DeleteAccountDeps = {}) {
       ? rpcBody.deletedCircleIds.filter((id): id is string => typeof id === 'string')
       : [];
 
-    // Best-effort Storage API cleanup for user prefix and deleted solo circle prefixes
-    await deleteStoragePrefixObjects(
-      fetchImpl,
-      url,
-      serviceKey,
-      'prescription-photos',
-      userId,
-    ).catch(() => undefined);
-
+    // Delete the deleted circles' files through the Storage API. Every bucket stores files under
+    // `{circleId}/...` (prescription photos, visit audio, PDF exports), never under a user id. The
+    // database function no longer deletes `storage.objects` rows itself (that left the files behind),
+    // so the rows are still there for the Storage API to find. If a delete fails here, the daily
+    // clean-up removes these short-lived files within 24 hours; the failure is logged with counts only.
+    let storageFailures = 0;
     for (const circleId of deletedCircleIds) {
-      await deleteStoragePrefixObjects(fetchImpl, url, serviceKey, 'visit-audio', circleId).catch(
-        () => undefined,
-      );
-      await deleteStoragePrefixObjects(fetchImpl, url, serviceKey, 'log-exports', circleId).catch(
-        () => undefined,
-      );
+      for (const bucket of ACCOUNT_DELETION_BUCKETS) {
+        await deleteStoragePrefixObjects(fetchImpl, url, serviceKey, bucket, circleId).catch(() => {
+          storageFailures += 1;
+        });
+      }
     }
 
     // Ensure Auth Admin also removes the user session/account if not already deleted by the RPC
@@ -366,6 +371,7 @@ export function createDeleteAccountHandler(deps: DeleteAccountDeps = {}) {
       event: 'delete_account_completed',
       userId,
       deletedCirclesCount: deletedCircleIds.length,
+      storageFailures,
     });
 
     return jsonResponse({ ok: true }, 200);

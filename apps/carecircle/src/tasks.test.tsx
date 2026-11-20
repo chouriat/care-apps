@@ -164,14 +164,25 @@ function createFakeTasksClient(tables: Record<string, Row[]>) {
     from,
     rpc: async () => ({ data: null, error: null }),
     channel: jest.fn((topic: string) => {
-      const ch = {
+      // Typed so TypeScript can follow `on` returning the channel itself (TS7022/TS7024 otherwise).
+      type FakeChannel = {
+        topic: string;
+        on: (
+          type: string,
+          filter: { table?: string },
+          cb: (payload: PostgresChangesPayload) => void,
+        ) => FakeChannel;
+        subscribe: () => FakeChannel;
+        unsubscribe: typeof unsubscribeSpy;
+      };
+      const ch: FakeChannel = {
         topic,
         on: jest.fn(
           (
             _type: string,
             filter: { table?: string },
             cb: (payload: PostgresChangesPayload) => void,
-          ) => {
+          ): FakeChannel => {
             if (filter?.table === 'tasks') {
               tasksRealtimeCallback = cb;
             }
@@ -241,7 +252,7 @@ beforeEach(() => {
 describe('CC-6b Shared tasks screen', () => {
   it('owner/helper can add, assign, complete, and un-complete a task through the real router and sync Today tasks due today', async () => {
     const { tables, routes } = setupRouter(HELPER_ID, []);
-    const view = await renderRouter(routes, { initialUrl: '/tasks', wrapper });
+    await renderRouter(routes, { initialUrl: '/tasks', wrapper });
 
     await waitFor(() => {
       expect(screen.getByTestId('tasks-empty-state')).toBeTruthy();

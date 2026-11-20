@@ -24,12 +24,27 @@ const RX_IMAGE_PATH =
 const createAiGatewayHandler = (deps: AiGatewayDeps = {}) =>
   createRealAiGatewayHandler({
     checkPrescriptionCircleAccess: async () => true,
+    // CC-5a (step 15 plan, item 2.1): summarizeVisit now needs a circle on the Family plan and
+    // knownMeds from that circle. These older tests are about routing, logging and providers, so by
+    // default the circle is on the Family plan and its medicines check out (visit_ai_test.ts and
+    // cc8_plan_limits_test.ts test those checks themselves).
+    checkCircleFamilyEntitlement: async () => ({ allowed: true }),
+    checkCircleMedicationIds: async () => true,
     readPrescriptionPhoto: async () => ({
       bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
       contentType: 'image/jpeg',
     }),
     ...deps,
   } as AiGatewayDeps);
+
+// summarizeVisit's input is strict and, since CC-5a, needs a circleId (step 15 plan, item 2.1).
+// Older tests here send only text (or text plus an imagePath meant for extractPrescription); give
+// them the circle and an empty knownMeds list, and drop the imagePath, which this task never takes.
+const VISIT_CIRCLE_ID = 'cc5a0001-0000-4000-8000-000000000001';
+const visitInput = (input?: Record<string, unknown>): Record<string, unknown> => {
+  const { imagePath: _imagePath, ...rest } = input ?? { text: 'Doctor said keep Metformin.' };
+  return { circleId: VISIT_CIRCLE_ID, knownMeds: [], ...rest };
+};
 
 const USER_A = '11111111-1111-4111-8111-111111111111';
 const USER_B = '99999999-9999-4999-8999-999999999999';
@@ -105,7 +120,10 @@ async function postAi(
   };
   const handler = createAiGatewayHandler(mergedDeps as AiGatewayDeps);
   const task = opts.task ?? 'carecircle.extractPrescription';
-  const input = opts.input ?? { imagePath: RX_IMAGE_PATH };
+  const input =
+    task === 'carecircle.summarizeVisit'
+      ? visitInput(opts.input)
+      : (opts.input ?? { imagePath: RX_IMAGE_PATH });
   const req = new Request('http://localhost/functions/v1/ai', {
     method: 'POST',
     headers: {

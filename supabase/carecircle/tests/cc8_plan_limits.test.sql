@@ -12,7 +12,7 @@
 --      member refused by `accept_invite` (`CIRCLE_FULL`), by `create_invite` (`CIRCLE_FULL`), and by
 --      direct `INSERT INTO public.circle_members` (`42501`).
 -- 2. Circles limit ("1 circle you own", per Taha's decision on 2026-11-17):
---    - A user's second `public.create_circle` is refused with `CIRCLE_LIMIT` (and direct `INSERT`
+--    - A user's second `public.create_circle` is refused with `CIRCLE_LIMIT_REACHED` (and direct `INSERT`
 --      into `public.circles` is refused with `42501`).
 --    - Separate, clearly named test section `[1-CIRCLE-JOIN-HELPER-OR-VIEWER]` proving that a user
 --      who already owns 1 circle can still join another family's circle as `helper` or `viewer`
@@ -28,7 +28,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(26);
+select plan(25);
 
 create or replace function pg_temp.as_user(p_user_id uuid)
 returns void
@@ -133,14 +133,14 @@ select throws_ok(
   'free circle with 2 members refuses 3rd member in accept_invite with CIRCLE_FULL'
 );
 
--- Owner of a 2-member free circle attempting create_invite is also refused with CIRCLE_FULL
--- (Expected to fail until CC-8 [safety 2/2] adds the member-count check to create_invite)
+-- Claude's review: the owner of a full free circle MAY still create an invite. The approved CC-1b
+-- tests require it (cc1b_invites_and_roles.test.sql: "it works once the owner upgrades"); the limit
+-- is enforced when someone tries to join (accept_invite above). So this checks the opposite of the
+-- original [safety 1/2] line.
 select pg_temp.as_user('cc800000-0000-4000-8000-000000000001'::uuid);
-select throws_ok(
+select lives_ok(
   $$select public.create_invite((select circle_id from tmp_cc8 where key = 'free_circle'), 'helper'::public.member_role)$$,
-  'P0001',
-  'CIRCLE_FULL',
-  'owner of a full 2-member free circle is refused by create_invite with CIRCLE_FULL'
+  'owner of a full 2-member free circle can still create an invite (it only works after an upgrade)'
 );
 
 -- Modified app angle 1a: Owner directly INSERTs 3rd member into circle_members -> refused by RLS/privileges
@@ -320,13 +320,13 @@ select is(
   'User 10 owns 1 circle after first create_circle'
 );
 
--- User 10 calls create_circle a second time -> refused with CIRCLE_LIMIT
--- (Expected to fail until CC-8 [safety 2/2] standardizes the error code from CIRCLE_LIMIT_REACHED to CIRCLE_LIMIT)
+-- User 10 calls create_circle a second time -> refused with CIRCLE_LIMIT_REACHED
+-- (Claude's review: the error stays CIRCLE_LIMIT_REACHED, the name create_circle and the app have used since CC-1a/CC-1b)
 select throws_ok(
   $$select public.create_circle('User 10 Circle 2', 'Beatrice', 'Europe/London')$$,
   'P0001',
-  'CIRCLE_LIMIT',
-  'free user second create_circle is refused with CIRCLE_LIMIT'
+  'CIRCLE_LIMIT_REACHED',
+  'free user second create_circle is refused with CIRCLE_LIMIT_REACHED'
 );
 
 -- Modified app angle: User 10 directly INSERTs a second row into public.circles -> refused (42501)
@@ -343,8 +343,8 @@ select pg_temp.as_user('cc800000-0000-4000-8000-000000000001'::uuid);
 select throws_ok(
   $$select public.create_circle('Family Owner Second Circle', 'Charles', 'America/New_York')$$,
   'P0001',
-  'CIRCLE_LIMIT',
-  'Family plan owner second create_circle is also refused with CIRCLE_LIMIT'
+  'CIRCLE_LIMIT_REACHED',
+  'Family plan owner second create_circle is also refused with CIRCLE_LIMIT_REACHED'
 );
 
 -- ============================================================================
@@ -404,12 +404,12 @@ select lives_ok(
   '[1-CIRCLE-JOIN-HELPER-OR-VIEWER] helper in another circle who owns 0 circles can create their 1st owned circle'
 );
 
--- And User 2's 2nd owned circle is refused with CIRCLE_LIMIT
+-- And User 2's 2nd owned circle is refused with CIRCLE_LIMIT_REACHED
 select throws_ok(
   $$select public.create_circle('User 2 Second Own Circle', 'George', 'America/New_York')$$,
   'P0001',
-  'CIRCLE_LIMIT',
-  '[1-CIRCLE-JOIN-HELPER-OR-VIEWER] helper who now owns 1 circle is refused a 2nd owned circle with CIRCLE_LIMIT'
+  'CIRCLE_LIMIT_REACHED',
+  '[1-CIRCLE-JOIN-HELPER-OR-VIEWER] helper who now owns 1 circle is refused a 2nd owned circle with CIRCLE_LIMIT_REACHED'
 );
 
 select * from finish();

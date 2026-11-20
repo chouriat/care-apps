@@ -82,7 +82,13 @@ values
   ('cc100000-0000-4000-8000-000000000002'::uuid, 'Helper Two', 'en', 'America/New_York'),
   ('cc100000-0000-4000-8000-000000000003'::uuid, 'Viewer Three', 'en', 'America/New_York'),
   ('cc100000-0000-4000-8000-000000000004'::uuid, 'Solo Owner Four', 'en', 'America/New_York'),
-  ('cc100000-0000-4000-8000-000000000005'::uuid, 'Stranger Five', 'en', 'Europe/Paris');
+  ('cc100000-0000-4000-8000-000000000005'::uuid, 'Stranger Five', 'en', 'Europe/Paris')
+-- Claude's review: the sign-up trigger already created these rows when auth.users got its rows,
+-- so a plain insert stopped the whole file at this line (duplicate key) and none of its checks ran.
+on conflict (user_id) do update
+  set display_name = excluded.display_name,
+      locale = excluded.locale,
+      timezone = excluded.timezone;
 
 -- Give u01 Family entitlement so Circle M can have 3 members
 insert into public.entitlements (user_id, entitlement, active, expires_at)

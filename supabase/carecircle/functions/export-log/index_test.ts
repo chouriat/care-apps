@@ -318,7 +318,7 @@ Deno.test(
     const uploaded = getStats().uploadedObject;
     assert(uploaded !== null, 'PDF bytes must be uploaded');
 
-    const extractedText = extractTextFromPdfBytes(uploaded.bytes);
+    const extractedText = await extractTextFromPdfBytes(uploaded.bytes);
     assert(
       extractedText.includes('Care recipient: Nadia Bensalem'),
       `expected recipient name in extracted text, got:\n${extractedText}`,
