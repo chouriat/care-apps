@@ -1,5 +1,6 @@
 export { camelToSnake, snakeToCamel } from '../case';
 export * from '../schemas/carecircle';
+export { isNetworkFailureMessage } from './network';
 export {
   ALLOWED_ANALYTICS_EVENTS,
   AnalyticsValidationError,

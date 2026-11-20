@@ -694,6 +694,7 @@ export function CalendarScreenView({
               <View testID="calendar-driver-option-none">
                 <Chip
                   label={en.calendar.driverNone}
+                  accessibilityLabel={`${en.calendar.driverLabel}: ${en.calendar.driverNone}`}
                   selected={driverUserId === null}
                   onPress={() => setDriverUserId(null)}
                 />
@@ -702,6 +703,7 @@ export function CalendarScreenView({
                 <View key={m.userId} testID={`calendar-driver-option-${m.userId}`}>
                   <Chip
                     label={m.displayName}
+                    accessibilityLabel={`${en.calendar.driverLabel}: ${m.displayName}`}
                     selected={driverUserId === m.userId}
                     onPress={() => setDriverUserId(m.userId)}
                   />
@@ -823,7 +825,7 @@ export function CalendarScreenView({
                               <Button
                                 variant="secondary"
                                 label={en.calendar.cancelDeleteCta}
-                                accessibilityLabel={en.calendar.cancelDeleteCta}
+                                accessibilityLabel={`${en.calendar.cancelDeleteCta} ${appt.title}`}
                                 onPress={() => setConfirmingDeleteId(null)}
                               />
                             </View>
@@ -891,6 +893,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dayPressable: {
+    minWidth: MIN_TOUCH_TARGET_PT,
     paddingVertical: 4,
   },
   dot: {

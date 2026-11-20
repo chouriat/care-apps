@@ -8,6 +8,7 @@ import {
   flushQueuedDoseCheckOffs,
   getOrInitMockTodaySnapshot,
   loadTodaySnapshot,
+  msUntilNextMidnightInZone,
   selectTodayAgenda,
   type TodayDeps,
   type TodayDoseStatusAction,
@@ -59,6 +60,7 @@ export default function TodayScreen({ deps, referenceNow, onNewVisitNote }: Toda
   snapshotRef.current = snapshot;
 
   const effectiveNow = useMemo(() => {
+    if (reloadToken > 0 && deps?.now) return deps.now();
     if (referenceNow) return referenceNow;
     if (deps?.now) return deps.now();
     if (mocks) return new Date(DEFAULT_MOCK_NOW_ISO);
@@ -151,8 +153,7 @@ export default function TodayScreen({ deps, referenceNow, onNewVisitNote }: Toda
     });
   }, [circleId, deps, hasBackend, mocks, snapshotUserId]);
 
-  // "Sent when the network returns": the app has no network listener, so try again when the app
-  // comes back to the foreground, and every 30 seconds while offline or while check-offs wait.
+  // "Sent when the network returns" and reload when returning to the foreground (including after midnight).
   useEffect(() => {
     if (!hasBackend || mocks) return;
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
@@ -160,6 +161,15 @@ export default function TodayScreen({ deps, referenceNow, onNewVisitNote }: Toda
     });
     return () => sub.remove();
   }, [handleRetry, hasBackend, mocks]);
+
+  // Reload Today when the date in the circle's time zone rolls past midnight.
+  const circleTimezone = snapshot?.circle.timezone;
+  useEffect(() => {
+    if (!hasBackend || mocks || !circleTimezone) return;
+    const delayMs = msUntilNextMidnightInZone(effectiveNow, circleTimezone);
+    const timer = setTimeout(handleRetry, delayMs);
+    return () => clearTimeout(timer);
+  }, [circleTimezone, effectiveNow, handleRetry, hasBackend, mocks]);
 
   useEffect(() => {
     if (!hasBackend || mocks || deps?.isOffline) return;

@@ -354,7 +354,12 @@
     "upgradeCta": "Upgrade to CareCircle Family",
     "contextErrorTitle": "Could not load your circle",
     "contextErrorMessage": "Check your connection and try again.",
-    "contextNoCircleMessage": "Create or join a circle before adding visit notes."
+    "contextNoCircleMessage": "Create or join a circle before adding visit notes.",
+    "loading": "Loading visit note...",
+    "emptyTitle": "Ready to capture a visit note",
+    "emptyMessage": "Record up to 10 minutes of audio or type your notes above, then tap Summarise.",
+    "offlineTitle": "You are offline",
+    "offlineMessage": "Summarising or saving a visit note requires an internet connection. Reconnect and try again."
   },
   "medsScan": {
     "title": "Scan Prescription",
@@ -440,7 +445,9 @@
     "exportingButton": "Exporting...",
     "exportRangeInvalidMessage": "Select a valid date range up to 90 days.",
     "exportErrorMessage": "Could not export the care log PDF. Please try again.",
-    "actorSystem": "System"
+    "actorSystem": "System",
+    "offlineTitle": "You are offline",
+    "offlineMessage": "Loading or exporting the care log requires an internet connection. Reconnect and try again."
   },
   "calendar": {
     "title": "Calendar",

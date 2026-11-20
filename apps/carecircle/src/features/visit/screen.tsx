@@ -5,6 +5,8 @@ import {
   Card,
   Chip,
   ConfirmDraft,
+  EmptyState,
+  ErrorState,
   Header,
   MIN_TOUCH_TARGET_PT,
   useTheme,
@@ -99,9 +101,10 @@ export function VisitNoteScreen({
   const { colors, radii, spacing, typography } = useTheme();
   const hasInitialContext = initialCircleId !== undefined && initialMemberRole !== undefined;
 
-  const [contextStatus, setContextStatus] = useState<'loading' | 'ok' | 'no_circle' | 'error'>(
-    hasInitialContext ? 'ok' : 'loading',
-  );
+  const [contextStatus, setContextStatus] = useState<
+    'loading' | 'ok' | 'no_circle' | 'offline' | 'error'
+  >(deps?.isOffline ? 'offline' : hasInitialContext ? 'ok' : 'loading');
+  const [isOfflineNotice, setIsOfflineNotice] = useState<boolean>(Boolean(deps?.isOffline));
   const [contextReloadKey, setContextReloadKey] = useState(0);
   const [circle, setCircle] = useState<Circle | null>(
     hasInitialContext
@@ -160,6 +163,13 @@ export function VisitNoteScreen({
   const [medFormSaveFailed, setMedFormSaveFailed] = useState(false);
 
   useEffect(() => {
+    if (deps?.isOffline) {
+      setIsOfflineNotice(true);
+      if (!hasInitialContext) {
+        setContextStatus('offline');
+        return;
+      }
+    }
     if (hasInitialContext) {
       setCircle({
         id: initialCircleId,
@@ -187,6 +197,7 @@ export function VisitNoteScreen({
       setMemberRole(ctx.memberRole);
       setActiveMedications(ctx.activeMedications);
       setContextStatus(ctx.status);
+      setIsOfflineNotice(ctx.status === 'offline');
     })();
 
     return () => {
@@ -663,29 +674,39 @@ export function VisitNoteScreen({
       {contextStatus === 'loading' ? (
         <View testID="visit-context-loading" style={[styles.statusRow, { gap: spacing.sm }]}>
           <ActivityIndicator color={colors.primary} />
+          <Text style={[typography.body, { color: colors.textPrimary }]}>{en.visit.loading}</Text>
         </View>
       ) : null}
 
-      {contextStatus === 'error' || contextStatus === 'no_circle' ? (
-        <Card>
-          <View testID="visit-context-error" style={{ gap: spacing.sm }}>
-            <Text style={[typography.subtitle, { color: colors.danger }]}>
-              {en.visit.contextErrorTitle}
-            </Text>
-            <Text style={[typography.body, { color: colors.textSecondary }]}>
-              {contextStatus === 'no_circle'
-                ? en.visit.contextNoCircleMessage
-                : en.visit.contextErrorMessage}
-            </Text>
-            <View testID="visit-context-retry-button">
-              <Button
-                label={en.visit.retryCta}
-                accessibilityLabel={en.visit.retryCta}
-                onPress={() => setContextReloadKey((k) => k + 1)}
-              />
-            </View>
-          </View>
-        </Card>
+      {contextStatus === 'offline' || isOfflineNotice ? (
+        <View testID="visit-offline">
+          <ErrorState
+            title={en.visit.offlineTitle}
+            message={en.visit.offlineMessage}
+            retryLabel={en.visit.retryCta}
+            onRetry={() => {
+              setIsOfflineNotice(false);
+              setContextReloadKey((k) => k + 1);
+            }}
+          />
+        </View>
+      ) : null}
+
+      {contextStatus === 'error' ? (
+        <View testID="visit-context-error">
+          <ErrorState
+            title={en.visit.contextErrorTitle}
+            message={en.visit.contextErrorMessage}
+            retryLabel={en.visit.retryCta}
+            onRetry={() => setContextReloadKey((k) => k + 1)}
+          />
+        </View>
+      ) : null}
+
+      {contextStatus === 'no_circle' ? (
+        <View testID="visit-empty-state">
+          <EmptyState title={en.visit.emptyTitle} message={en.visit.contextNoCircleMessage} />
+        </View>
       ) : null}
 
       {contextStatus === 'ok' && !canEdit ? (
@@ -814,6 +835,12 @@ export function VisitNoteScreen({
                 }}
               />
             </View>
+
+            {!isRecording && !capturedRecording && typedText.trim().length === 0 ? (
+              <View testID="visit-empty-state">
+                <EmptyState title={en.visit.emptyTitle} message={en.visit.emptyMessage} />
+              </View>
+            ) : null}
           </View>
         </Card>
       ) : null}
@@ -1276,6 +1303,7 @@ const styles = StyleSheet.create({
   },
   textArea: {
     minHeight: 96,
+    minWidth: MIN_TOUCH_TARGET_PT,
     borderWidth: 1,
     textAlignVertical: 'top',
   },

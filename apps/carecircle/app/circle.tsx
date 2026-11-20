@@ -1,7 +1,7 @@
 import type { MemberRole } from '@carecircle/core';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Share, View } from 'react-native';
+import { View } from 'react-native';
 import en from '../i18n/en.json';
 import { getAppAuthController } from '../src/features/auth/api';
 import {
@@ -12,6 +12,7 @@ import {
   loadCircleSettings,
   openStoreSubscriptionSettings,
   removeCircleMember,
+  shareExportedUserDataJson,
   transferOwnershipViaRpc,
   updateMemberRole,
   type CircleMemberItem,
@@ -203,7 +204,7 @@ export default function CircleRoute({ deps }: CircleRouteProps = {}) {
       }
       return;
     }
-    await Share.share({ message: res.json }).catch(() => undefined);
+    await shareExportedUserDataJson(res.json).catch(() => undefined);
   }, []);
 
   const handleManageSubscription = useCallback(async () => {

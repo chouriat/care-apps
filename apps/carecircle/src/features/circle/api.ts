@@ -1,10 +1,13 @@
 import {
   circleMemberRowSchema,
   circleRowSchema,
+  isNetworkFailureMessage,
   memberRoleSchema,
   type MemberRole,
 } from '@carecircle/core';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { Linking, Platform } from 'react-native';
 import en from '../../../i18n/en.json';
 import { getSupabaseClient } from '../auth/api';
@@ -95,13 +98,6 @@ export function parseInviteToken(rawInput: string): string | null {
   }
   const candidate = match[1];
   return INVITE_TOKEN_PATTERN.test(candidate) ? candidate : null;
-}
-
-function isNetworkFailureMessage(message: string, code?: string): boolean {
-  if (code === 'NETWORK_ERROR') {
-    return true;
-  }
-  return /network|fetch failed|failed to fetch|offline|load failed/i.test(message);
 }
 
 // Analytics must never fail the action, whether it throws right away or rejects later.
@@ -810,6 +806,46 @@ export async function exportMyDataViaRpc(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, isOffline: isNetworkFailureMessage(message) };
+  }
+}
+
+export const USER_DATA_EXPORT_FILENAME = 'carecircle-data-export.json';
+
+/**
+ * Writes the exported user JSON to a `.json` file in the device's cache directory, shares the
+ * `.json` file via `expo-sharing` (`Sharing.shareAsync`), and always deletes the temporary cache
+ * file afterwards (including when sharing fails). Never sends the JSON as plain message text and
+ * never logs any part of the exported data.
+ */
+export async function shareExportedUserDataJson(
+  json: string,
+  options?: {
+    shareAsync?: (
+      url: string,
+      shareOptions?: { mimeType?: string; UTI?: string; dialogTitle?: string },
+    ) => Promise<unknown>;
+  },
+): Promise<{ fileUri: string }> {
+  const shareAsync = options?.shareAsync ?? ((url, opts) => Sharing.shareAsync(url, opts));
+  const file = new File(Paths.cache, USER_DATA_EXPORT_FILENAME);
+  try {
+    if (!file.exists) {
+      file.create();
+    }
+    file.write(json);
+    await shareAsync(file.uri, {
+      mimeType: 'application/json',
+      UTI: 'public.json',
+    });
+    return { fileUri: file.uri };
+  } finally {
+    try {
+      if (file.exists) {
+        file.delete();
+      }
+    } catch {
+      // Best-effort cleanup of the temporary cache file.
+    }
   }
 }
 
