@@ -113,13 +113,42 @@ Every statement below is written directly from the CareCircle codebase, with the
 
 ---
 
-## 3. Exporting Your Data and Deleting Your Account
+## 3. Legal Basis for Processing (GDPR / UK GDPR)
 
-- **Export your data (JSON):** At any time inside the app, open **Circle Settings > Export my data (JSON)**. CareCircle calls `public.export_user_data()` (`supabase/carecircle/migrations/20261116000006_delete_account_and_export.sql`) and lets you save or share a `.json` file containing your profile, entitlements, memberships, circles, medications, dose events, appointments, tasks, visit notes, and care log entries (`apps/carecircle/app/circle.tsx`, `apps/carecircle/src/features/circle/api.ts`).
+- **Health information (special-category data under GDPR Art. 9):** Medications, dose check-offs, prescription label photos, medical appointments, doctor's visit audio recordings, visit transcripts and summaries, and care log entries include data concerning health under GDPR Art. 9(1). Processing this health data requires **explicit consent** under **GDPR Art. 9(2)(a)** (together with GDPR Art. 6(1)(a) consent and Art. 6(1)(b) performance of a contract).
+  - **Where the app asks for explicit consent:** `[[TAHA: consent step — SignInScreen.tsx and OnboardingStartScreen.tsx do not yet include an explicit GDPR Art. 9(2)(a) consent step; add or specify the consent step before launch]]`.
+  - **Withdrawing consent:** You can withdraw consent at any time by deleting individual items, leaving a circle, or deleting your account under **Circle Settings > Delete account** (`apps/carecircle/app/circle.tsx`). Withdrawing consent does not affect the lawfulness of processing carried out before withdrawal.
+- **Account, circle membership, subscription, and user-enabled notifications (GDPR Art. 6(1)(b)):** Processed as necessary to provide the CareCircle service you requested (signing you in, enforcing circle access rules, delivering missed-dose notifications when you enable push notifications, and managing `carecircle_family` entitlements).
+- **Security, rate limiting, scrubbed crash reporting, and counts-only analytics:** Processed under **GDPR Art. 6(1)(f)** legitimate interests in keeping the service reliable and secure (such as per-user AI rate limiting in `supabase/carecircle/functions/ai/handler.ts` and scrubbed crash diagnostics in `apps/carecircle/src/features/observability/api.ts`), or under **GDPR Art. 6(1)(a) / ePrivacy** consent where required by applicable law (`[[TAHA: confirm crash reporting and analytics legal basis / opt-in setting]]`).
+- **Legal obligations (GDPR Art. 6(1)(c)):** Subscription payment and tax records are processed by Apple and Google as merchants of record, and where applicable by the publisher to comply with statutory accounting or tax obligations (`[[TAHA: confirm publisher accounting retention obligations]]`).
+
+---
+
+## 4. Transfers Outside the EU / EEA (and UK)
+
+CareCircle uses the service providers below. Where personal or health data is transferred outside the European Economic Area (EEA) or the United Kingdom, transfers rely on an adequacy decision (such as the **EU-U.S. Data Privacy Framework**, where the provider is certified) and/or the European Commission's **Standard Contractual Clauses (SCCs)** (and the UK International Data Transfer Addendum, where applicable):
+
+| Provider | Role in CareCircle | Processing Country / Region | Transfer Safeguard |
+| --- | --- | --- | --- |
+| **Supabase** (`supabase/carecircle/`) | Database, authentication, temporary file storage, and Edge Functions | `[[TAHA: Supabase project region, e.g. EU (Frankfurt/Ireland) or US]]`; Supabase, Inc. is headquartered in the **United States** | EU Standard Contractual Clauses (SCCs) / Supabase DPA (`[[TAHA: confirm Supabase DPA and hosted region]]`) |
+| **Anthropic** (`supabase/carecircle/functions/ai/routes.ts`) | Prescription label photo extraction and visit-note summarisation (`claude-sonnet-4-6`) | **United States** (Anthropic, PBC) | EU Standard Contractual Clauses (SCCs) under Anthropic's Data Processing Addendum (`[[TAHA: confirm Anthropic DPA / SCCs]]`) |
+| **Google** (`supabase/carecircle/functions/ai/routes.ts`) | Visit audio speech-to-text transcription and AI fallback (`gemini-2.5-flash`), plus Google Sign-In, Google Play Billing, and FCM on Android | **United States** and Google global cloud regions (`[[TAHA: confirm Gemini API / Google Cloud region]]`) | EU-U.S. Data Privacy Framework and/or EU Standard Contractual Clauses (SCCs) under Google's Data Processing Terms (`[[TAHA: confirm Google DPA / SCCs]]`) |
+| **Sentry** (`apps/carecircle/src/features/observability/api.ts`) | Scrubbed crash reporting (UUID and scrubbed stack traces only) | `[[TAHA: confirm Sentry data residency — United States by default unless an EU .de.sentry.io DSN is configured]]` (Functional Software, Inc., **United States**) | EU-U.S. Data Privacy Framework and EU Standard Contractual Clauses (SCCs) under Sentry's DPA (`[[TAHA: confirm Sentry DPA and ingest region]]`) |
+| **PostHog** (`apps/carecircle/src/features/observability/api.ts`) | Counts-and-enums product analytics (`DEFAULT_POSTHOG_HOST = 'https://eu.i.posthog.com'`) | **European Union (Frankfurt, Germany)** by default; **United States** if `EXPO_PUBLIC_POSTHOG_HOST` is set to PostHog US Cloud or for support by PostHog, Inc. (USA) | Hosted in the EU by default; EU-U.S. Data Privacy Framework and EU Standard Contractual Clauses (SCCs) under PostHog's DPA if transferred to the US (`[[TAHA: confirm PostHog EU project and DPA]]`) |
+| **RevenueCat** (`apps/carecircle/src/features/paywall/api.ts`, `supabase/carecircle/functions/revenuecat-webhook/handler.ts`) | Subscription entitlement verification (`appUserID` UUID and subscription status) | **United States** (RevenueCat, Inc.) | EU-U.S. Data Privacy Framework and EU Standard Contractual Clauses (SCCs) under RevenueCat's DPA (`[[TAHA: confirm RevenueCat DPA]]`) |
+| **Expo** (`supabase/carecircle/functions/send-push/handler.ts`) | Push notification relay (`https://exp.host/--/api/v2/push/send`) to Apple APNs and Google FCM (neutral text only, no health details) | **United States** (650 Industries, Inc.) | EU Standard Contractual Clauses (SCCs) / Expo Terms & DPA (`[[TAHA: confirm Expo DPA / transfer terms]]`) |
+
+You may request information about or a copy of the applicable transfer safeguards by contacting `[[TAHA: privacy email]]`.
+
+---
+
+## 5. Exporting Your Data and Deleting Your Account
+
+- **Export your data (JSON):** At any time inside the app, open **Circle Settings > Export my data**. CareCircle calls `public.export_user_data()` (`supabase/carecircle/migrations/20261116000006_delete_account_and_export.sql`) and lets you save or share a `.json` file containing your profile, entitlements, memberships, circles, medications, dose events, appointments, tasks, visit notes, and care log entries (`apps/carecircle/app/circle.tsx`, `apps/carecircle/src/features/circle/api.ts`).
 - **Delete your account:** At any time inside the app, open **Circle Settings > Delete account** (`apps/carecircle/app/circle.tsx`, `supabase/carecircle/functions/delete-account/handler.ts`). If you no longer have the app installed, see our deletion instructions page or email `[[TAHA: email]]`.
 
 ---
 
-## 4. Your Privacy Rights and Contact
+## 6. Your Privacy Rights and Contact
 
-Depending on where you live (including under the GDPR / UK GDPR and applicable US state privacy laws), you have the right to access, export, correct, or delete your personal data, and to withdraw consent or object to processing. You can exercise access/export and deletion directly in the app under **Circle Settings**, or by contacting us at `[[TAHA: privacy email]]`.
+Depending on where you live (including under the GDPR / UK GDPR and applicable US state privacy laws), you have the right to access, export, correct, or delete your personal data, to restrict or object to certain processing, to withdraw your consent at any time, and to lodge a complaint with your local data protection supervisory authority (`[[TAHA: lead supervisory authority, if applicable]]`). You can exercise access/export and deletion directly in the app under **Circle Settings**, or by contacting us at `[[TAHA: privacy email]]`.
