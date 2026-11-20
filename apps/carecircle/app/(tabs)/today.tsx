@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import { loadCareCircleMocks } from '../../src/features/mocks';
@@ -27,9 +28,17 @@ export const TODAY_RETRY_INTERVAL_MS = 30_000;
 export interface TodayRouteProps {
   deps?: TodayDeps;
   referenceNow?: Date;
+  onNewVisitNote?: (appointmentId?: string) => void;
 }
 
-export default function TodayScreen({ deps, referenceNow }: TodayRouteProps = {}) {
+function defaultOpenNewVisitNote(appointmentId?: string): void {
+  const target = appointmentId
+    ? `/visit/new?appointmentId=${encodeURIComponent(appointmentId)}`
+    : '/visit/new';
+  router.push(target as never);
+}
+
+export default function TodayScreen({ deps, referenceNow, onNewVisitNote }: TodayRouteProps = {}) {
   const mocks = loadCareCircleMocks(deps?.env);
   const hasBackend =
     Boolean(mocks) ||
@@ -231,6 +240,7 @@ export default function TodayScreen({ deps, referenceNow }: TodayRouteProps = {}
       notice={notice}
       onRetry={handleRetry}
       onCheckOffDose={handleCheckOffDose}
+      onNewVisitNote={onNewVisitNote ?? defaultOpenNewVisitNote}
     />
   );
 }

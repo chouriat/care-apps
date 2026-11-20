@@ -40,6 +40,22 @@ export default function TabsLayout() {
           tabBarButtonTestID: 'tab-meds',
         }}
       />
+      <Tabs.Screen
+        name="calendar"
+        options={{
+          title: en.calendar.title,
+          tabBarAccessibilityLabel: en.calendar.title,
+          tabBarButtonTestID: 'tab-calendar',
+        }}
+      />
+      <Tabs.Screen
+        name="tasks"
+        options={{
+          title: en.tasks.title,
+          tabBarAccessibilityLabel: en.tasks.title,
+          tabBarButtonTestID: 'tab-tasks',
+        }}
+      />
     </Tabs>
   );
 }

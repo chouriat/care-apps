@@ -1,1 +1,5 @@
-export { PaywallSheet, type PaywallSheetProps } from './PaywallSheet';
+export {
+  defaultLimitMessageForTrigger,
+  PaywallSheet,
+  type PaywallSheetProps,
+} from './PaywallSheet';

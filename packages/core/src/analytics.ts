@@ -1,7 +1,14 @@
 export type MemberRoleMetric = 'owner' | 'helper' | 'viewer';
 export type MedAddedSourceMetric = 'manual' | 'photo';
 export type DoseActionStatusMetric = 'given' | 'skipped';
-export type PaywallTriggerMetric = 'member_limit' | 'visit_note_ai' | 'pdf_export' | 'settings';
+export type PaywallTriggerMetric =
+  | 'members'
+  | 'visit_note'
+  | 'pdf_export'
+  | 'circles'
+  | 'settings'
+  | 'member_limit'
+  | 'visit_note_ai';
 export type EntitlementMetric = 'carecircle_family';
 
 /**
@@ -33,11 +40,14 @@ export interface CareCircleAnalyticsEventMap {
     missedCount?: number;
   };
   cc_visit_note_saved: {
+    followUps?: number;
+    medChanges?: number;
     followUpCount?: number;
     medChangeCount?: number;
     questionCount?: number;
   };
   cc_log_exported: {
+    days?: number;
     daySpan?: number;
     entryCount?: number;
   };
@@ -98,11 +108,14 @@ const EVENT_PROPERTY_RULES: {
     missedCount: { kind: 'count', required: false },
   },
   cc_visit_note_saved: {
+    followUps: { kind: 'count', required: false },
+    medChanges: { kind: 'count', required: false },
     followUpCount: { kind: 'count', required: false },
     medChangeCount: { kind: 'count', required: false },
     questionCount: { kind: 'count', required: false },
   },
   cc_log_exported: {
+    days: { kind: 'count', required: false },
     daySpan: { kind: 'count', required: false },
     entryCount: { kind: 'count', required: false },
   },
@@ -110,7 +123,15 @@ const EVENT_PROPERTY_RULES: {
     trigger: {
       kind: 'enum',
       required: false,
-      values: ['member_limit', 'visit_note_ai', 'pdf_export', 'settings'],
+      values: [
+        'members',
+        'visit_note',
+        'pdf_export',
+        'circles',
+        'settings',
+        'member_limit',
+        'visit_note_ai',
+      ],
     },
   },
   cc_trial_started: {

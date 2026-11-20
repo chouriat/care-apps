@@ -1,5 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
+import { View } from 'react-native';
 import { acceptInviteViaRpc, type AcceptInviteErrorCode } from '../../src/features/circle';
 import {
   createCircleViaRpc,
@@ -7,6 +8,7 @@ import {
   type CreateCircleFormValues,
 } from '../../src/features/onboarding/api';
 import { OnboardingStartScreen } from '../../src/features/onboarding/components';
+import { PaywallSheet } from '../../src/features/paywall/components';
 
 export default function OnboardingStartRoute() {
   const router = useRouter();
@@ -15,6 +17,7 @@ export default function OnboardingStartRoute() {
   const [errorCode, setErrorCode] = useState<CreateCircleErrorCode | AcceptInviteErrorCode | null>(
     null,
   );
+  const [paywallVisible, setPaywallVisible] = useState(false);
 
   const handleCreateCircle = useCallback(
     async (values: CreateCircleFormValues): Promise<boolean> => {
@@ -31,6 +34,9 @@ export default function OnboardingStartRoute() {
         }
         setIsOffline(result.isOffline);
         setErrorCode(result.errorCode);
+        if (result.errorCode === 'CIRCLE_LIMIT') {
+          setPaywallVisible(true);
+        }
         return false;
       } catch {
         setErrorCode('CREATE_CIRCLE_FAILED');
@@ -55,6 +61,9 @@ export default function OnboardingStartRoute() {
         }
         setIsOffline(result.isOffline);
         setErrorCode(result.errorCode);
+        if (result.errorCode === 'CIRCLE_LIMIT') {
+          setPaywallVisible(true);
+        }
         return false;
       } catch {
         setErrorCode('ACCEPT_INVITE_FAILED');
@@ -72,14 +81,21 @@ export default function OnboardingStartRoute() {
   }, []);
 
   return (
-    <OnboardingStartScreen
-      isLoading={isLoading}
-      isOffline={isOffline}
-      hasError={errorCode !== null && !isOffline}
-      errorCode={errorCode}
-      onCreateCircle={handleCreateCircle}
-      onJoinCircle={handleJoinCircle}
-      onRetry={handleRetry}
-    />
+    <View style={{ flex: 1 }}>
+      <OnboardingStartScreen
+        isLoading={isLoading}
+        isOffline={isOffline}
+        hasError={errorCode !== null && !isOffline}
+        errorCode={errorCode}
+        onCreateCircle={handleCreateCircle}
+        onJoinCircle={handleJoinCircle}
+        onRetry={handleRetry}
+      />
+      <PaywallSheet
+        visible={paywallVisible}
+        trigger="circles"
+        onClose={() => setPaywallVisible(false)}
+      />
+    </View>
   );
 }

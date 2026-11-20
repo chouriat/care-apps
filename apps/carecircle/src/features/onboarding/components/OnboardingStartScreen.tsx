@@ -125,7 +125,7 @@ export function OnboardingStartScreen({
   }, [handleSubmitCreate, handleSubmitJoin, mode, onRetry]);
 
   const errorMessage =
-    errorCode === 'CIRCLE_LIMIT_REACHED'
+    errorCode === 'CIRCLE_LIMIT_REACHED' || errorCode === 'CIRCLE_LIMIT'
       ? en.onboarding.limitReachedMessage
       : errorCode === 'CIRCLE_FULL'
         ? en.onboarding.joinCircleFullMessage
@@ -456,6 +456,7 @@ export function OnboardingStartScreen({
       )}
 
       <Text
+        testID="onboarding-disclaimer"
         style={{
           color: colors.textMuted,
           fontSize: typography.caption.fontSize,

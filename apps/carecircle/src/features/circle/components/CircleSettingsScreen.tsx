@@ -6,6 +6,7 @@ import en from '../../../../i18n/en.json';
 import type {
   CircleMemberItem,
   CreateInviteErrorCode,
+  DeleteAccountErrorCode,
   InviteAssignableRole,
   MemberActionErrorCode,
 } from '../api';
@@ -23,11 +24,17 @@ export interface CircleSettingsScreenProps {
   actionNotice?: string | null;
   inviteUrl?: string | null;
   inviteExpiresAt?: string | null;
-  errorCode?: CreateInviteErrorCode | MemberActionErrorCode | null;
+  errorCode?: CreateInviteErrorCode | MemberActionErrorCode | DeleteAccountErrorCode | null;
   onCreateInvite?: (role: InviteAssignableRole) => void | Promise<void>;
   onChangeMemberRole?: (userId: string, nextRole: InviteAssignableRole) => void | Promise<void>;
   onRemoveMember?: (userId: string) => void | Promise<void>;
+  onTransferOwnership?: (newOwnerId: string) => void | Promise<void>;
   onShowPaywall?: () => void;
+  onUpgradePlan?: () => void;
+  onOpenCareLog?: () => void;
+  onExportData?: () => void | Promise<void>;
+  onManageSubscription?: () => void | Promise<void>;
+  onDeleteAccount?: () => void | Promise<void>;
   onRetry?: () => void;
 }
 
@@ -41,6 +48,7 @@ export function CircleSettingsScreen({
   circleName,
   currentUserId,
   currentUserRole,
+  planName = 'free',
   members,
   isLoading = false,
   isOffline = false,
@@ -51,11 +59,18 @@ export function CircleSettingsScreen({
   onCreateInvite,
   onChangeMemberRole,
   onRemoveMember,
+  onTransferOwnership,
   onShowPaywall,
+  onUpgradePlan,
+  onOpenCareLog,
+  onExportData,
+  onManageSubscription,
+  onDeleteAccount,
   onRetry,
 }: CircleSettingsScreenProps) {
   const { colors, radii, spacing, typography } = useTheme();
   const [selectedInviteRole, setSelectedInviteRole] = useState<InviteAssignableRole>('helper');
+  const [confirmingDeleteAccount, setConfirmingDeleteAccount] = useState(false);
 
   const isOwner = currentUserRole === 'owner';
   const showStateOnly = isLoading || isOffline || hasError;
@@ -250,6 +265,18 @@ export function CircleSettingsScreen({
                           }}
                         />
                       </View>
+                      {onTransferOwnership ? (
+                        <View testID={`circle-member-transfer-${member.userId}`}>
+                          <Button
+                            variant="secondary"
+                            label={en.circle.transferOwnership}
+                            accessibilityLabel={en.circle.transferOwnership}
+                            onPress={() => {
+                              void onTransferOwnership(member.userId);
+                            }}
+                          />
+                        </View>
+                      ) : null}
                     </View>
                   ) : null}
                 </View>
@@ -357,6 +384,159 @@ export function CircleSettingsScreen({
                 </View>
               </View>
             ) : null}
+          </View>
+        </Card>
+      ) : null}
+
+      {!showStateOnly ? (
+        <Card>
+          <View testID="circle-plan-card" style={{ gap: spacing.xs }}>
+            <Text
+              style={{
+                color: colors.textPrimary,
+                fontSize: typography.subtitle.fontSize,
+                lineHeight: typography.subtitle.lineHeight,
+                fontWeight: typography.subtitle.fontWeight,
+              }}
+            >
+              {en.circle.planHeading}
+            </Text>
+            <Text
+              testID="circle-plan-value"
+              style={{
+                color: colors.textSecondary,
+                fontSize: typography.body.fontSize,
+                lineHeight: typography.body.lineHeight,
+              }}
+            >
+              {planName === 'family' ? en.circle.planFamily : en.circle.planFree}
+            </Text>
+            {isOwner && planName !== 'family' ? (
+              <View testID="circle-plan-upgrade-button">
+                <Button
+                  label={en.circle.planUpgradeCta}
+                  accessibilityLabel={en.circle.upgradeA11y}
+                  onPress={() => (onUpgradePlan ?? onShowPaywall)?.()}
+                />
+              </View>
+            ) : null}
+          </View>
+        </Card>
+      ) : null}
+
+      {!showStateOnly ? (
+        <Card>
+          <View style={{ gap: spacing.xs }}>
+            <Text
+              style={{
+                color: colors.textSecondary,
+                fontSize: typography.caption.fontSize,
+                lineHeight: typography.caption.lineHeight,
+              }}
+            >
+              {en.circle.careLogSubtitle}
+            </Text>
+            <View testID="circle-care-log-button">
+              <Button
+                variant="secondary"
+                label={en.circle.careLogLabel}
+                accessibilityLabel={en.circle.careLogLabel}
+                onPress={() => onOpenCareLog?.()}
+              />
+            </View>
+          </View>
+        </Card>
+      ) : null}
+
+      {!showStateOnly ? (
+        <Card>
+          <View testID="circle-account-card" style={{ gap: spacing.sm }}>
+            <Text
+              style={{
+                color: colors.textPrimary,
+                fontSize: typography.subtitle.fontSize,
+                lineHeight: typography.subtitle.lineHeight,
+                fontWeight: typography.subtitle.fontWeight,
+              }}
+            >
+              {en.circle.accountHeading}
+            </Text>
+
+            <View testID="circle-export-data-button">
+              <Button
+                variant="secondary"
+                label={en.circle.exportDataCta}
+                accessibilityLabel={en.circle.exportDataA11y}
+                onPress={() => {
+                  void onExportData?.();
+                }}
+              />
+            </View>
+
+            <View testID="circle-manage-subscription-button">
+              <Button
+                variant="secondary"
+                label={en.circle.manageSubscriptionCta}
+                accessibilityLabel={en.circle.manageSubscriptionA11y}
+                onPress={() => {
+                  void onManageSubscription?.();
+                }}
+              />
+            </View>
+
+            {errorCode === 'OWNER_MUST_TRANSFER' ? (
+              <Text
+                testID="circle-delete-owner-must-transfer"
+                style={{
+                  color: colors.danger,
+                  fontSize: typography.caption.fontSize,
+                  lineHeight: typography.caption.lineHeight,
+                }}
+              >
+                {en.circle.deleteAccountOwnerMustTransfer}
+              </Text>
+            ) : null}
+
+            {!confirmingDeleteAccount ? (
+              <View testID="circle-delete-account-button">
+                <Button
+                  variant="secondary"
+                  label={en.circle.deleteAccountCta}
+                  accessibilityLabel={en.circle.deleteAccountA11y}
+                  onPress={() => setConfirmingDeleteAccount(true)}
+                />
+              </View>
+            ) : (
+              <View testID="circle-delete-account-confirm-box" style={{ gap: spacing.xs }}>
+                <Text
+                  style={{
+                    color: colors.textSecondary,
+                    fontSize: typography.caption.fontSize,
+                    lineHeight: typography.caption.lineHeight,
+                  }}
+                >
+                  {en.circle.deleteAccountConfirmPrompt}
+                </Text>
+                <View testID="circle-confirm-delete-account-button">
+                  <Button
+                    label={en.circle.deleteAccountConfirmCta}
+                    accessibilityLabel={en.circle.deleteAccountConfirmCta}
+                    onPress={() => {
+                      setConfirmingDeleteAccount(false);
+                      void onDeleteAccount?.();
+                    }}
+                  />
+                </View>
+                <View testID="circle-cancel-delete-account-button">
+                  <Button
+                    variant="secondary"
+                    label={en.circle.deleteAccountCancelCta}
+                    accessibilityLabel={en.circle.deleteAccountCancelCta}
+                    onPress={() => setConfirmingDeleteAccount(false)}
+                  />
+                </View>
+              </View>
+            )}
           </View>
         </Card>
       ) : null}

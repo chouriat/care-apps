@@ -249,32 +249,70 @@ Deno.test('extractPrescription fails closed when the membership check cannot run
   assert(!readOrProvider(r.events), 'no Storage read or provider call when the access check fails');
 });
 
-Deno.test('summarizeVisit is unchanged: no circle access check and no Storage read', async () => {
-  const events: string[] = [];
-  const stubProvider: AiProvider = {
-    generate: async (req) => ({ output: FAKE_FIXTURES[req.task], inputTokens: 1, outputTokens: 1 }),
-  };
-  const { body } = await callGateway(
-    {
+// Before CC-5a this test said summarizeVisit did no circle check at all. CC-5a changed that on purpose
+// (step 15 plan, item 2.2): the caller must be owner or helper of the circle named in the input. What
+// stays true is that summarizeVisit never reads a prescription photo.
+Deno.test(
+  'summarizeVisit checks the circle named in its input and never reads a prescription photo',
+  async () => {
+    const events: string[] = [];
+    const accessChecks: Array<{ userId: string; circleId: string }> = [];
+    const stubProvider: AiProvider = {
+      generate: async (req) => ({
+        output: FAKE_FIXTURES[req.task],
+        inputTokens: 1,
+        outputTokens: 1,
+      }),
+    };
+    const visitCircle = 'cc5a0001-0000-4000-8000-000000000001';
+    const baseDeps = {
       verifyJwt: async () => ({ userId: VIEWER_A }),
       countRecentCalls: async () => 0,
       logCall: async () => {},
       providers: { fake: stubProvider, gemini: stubProvider, anthropic: stubProvider },
-      checkPrescriptionCircleAccess: async () => {
-        events.push('access');
-        return false;
-      },
+      checkCircleFamilyEntitlement: async () => ({ allowed: true as const }),
+      checkCircleMedicationIds: async () => true,
       readPrescriptionPhoto: async () => {
         events.push('read');
         return null;
       },
-    } as RxGatewayDeps,
-    'carecircle.summarizeVisit',
-    { transcript: 'Doctor said keep Metformin.', medications: [] },
-  );
-  assert(events.length === 0, `summarizeVisit must not touch photos, got ${events.join(', ')}`);
-  assert(body.ok === true, `summarizeVisit runs as before, got ${JSON.stringify(body)}`);
-});
+    };
+    const input = { circleId: visitCircle, text: 'Doctor said keep Metformin.', knownMeds: [] };
+
+    const refused = await callGateway(
+      {
+        ...baseDeps,
+        checkPrescriptionCircleAccess: async (opts: { userId: string; circleId: string }) => {
+          accessChecks.push(opts);
+          return false;
+        },
+      } as RxGatewayDeps,
+      'carecircle.summarizeVisit',
+      input,
+    );
+    assert(
+      refused.body.ok === false && refused.body.error?.code === 'INPUT_INVALID',
+      `a caller without owner or helper access is refused, got ${JSON.stringify(refused.body)}`,
+    );
+    assert(
+      accessChecks.length === 1 &&
+        accessChecks[0].userId === VIEWER_A &&
+        accessChecks[0].circleId === visitCircle,
+      `access is checked once for that circle, got ${JSON.stringify(accessChecks)}`,
+    );
+
+    const allowed = await callGateway(
+      { ...baseDeps, checkPrescriptionCircleAccess: async () => true } as RxGatewayDeps,
+      'carecircle.summarizeVisit',
+      input,
+    );
+    assert(
+      allowed.body.ok === true,
+      `an allowed caller gets a draft, got ${JSON.stringify(allowed.body)}`,
+    );
+    assert(events.length === 0, `summarizeVisit must not touch photos, got ${events.join(', ')}`);
+  },
+);
 
 // A tiny PostgREST stand-in: applies `col=eq.x` and `col=in.(a,b)` filters to the MEMBERS table, so a
 // query that forgets the circle filter (or the role filter) gets the wrong answer, like the real thing.

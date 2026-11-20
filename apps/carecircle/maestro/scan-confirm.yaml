@@ -35,7 +35,14 @@ env:
     id: 'onboarding-submit-button'
 - assertVisible:
     id: 'today-empty-state'
-- openLink: 'carecircle://meds/scan'
+- tapOn:
+    id: 'tab-meds'
+- assertVisible:
+    id: 'meds-screen'
+- assertVisible:
+    id: 'meds-empty-state'
+- tapOn:
+    id: 'meds-scan-button'
 - assertVisible:
     id: 'meds-scan-screen'
 - assertVisible:
@@ -43,23 +50,30 @@ env:
 - tapOn:
     id: 'scan-pick-photo-button'
 - tapOn:
-    text: '.*rx-test.*'
-    optional: true
+    id: '.*icon_thumbnail.*'
 - assertVisible:
     id: 'scan-draft-review'
-# Before Save is tapped, open /meds and verify no medications row exists yet
-- openLink: 'carecircle://meds'
+# Before Save is tapped, go back to /meds and verify no medications row exists yet
+- back
+- assertVisible:
+    id: 'meds-screen'
 - assertVisible:
     id: 'meds-empty-state'
 # Return to /meds/scan, pick photo, confirm and save
-- openLink: 'carecircle://meds/scan'
+- tapOn:
+    id: 'meds-scan-button'
+- assertVisible:
+    id: 'meds-scan-screen'
 - tapOn:
     id: 'scan-pick-photo-button'
 - tapOn:
-    text: '.*rx-test.*'
-    optional: true
+    id: '.*icon_thumbnail.*'
 - assertVisible:
     id: 'scan-draft-review'
+- scrollUntilVisible:
+    element:
+      id: 'scan-save-button'
+    direction: DOWN
 - tapOn:
     id: 'scan-save-button'
 - assertVisible:
