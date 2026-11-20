@@ -4,8 +4,10 @@
 -- 1. circle_has_family_plan: the membership check never ran. Inside a SECURITY DEFINER function
 --    current_user is the function's owner (postgres), so `current_user not in ('postgres',
 --    'service_role')` was always false and any signed-in user could ask about any circle id.
---    Check the caller instead: a signed-in caller (auth.uid() set) must be a member; the service
---    role (Edge Functions) has no auth.uid() and may ask about any circle.
+--    A membership check cannot simply be added: accept_invite asks this question for the person
+--    who is joining, who is not a member yet. Nothing in the app calls this function directly, so
+--    signed-in users may no longer call it at all; accept_invite (SECURITY DEFINER, runs as the
+--    owner) and the service role still can.
 create or replace function public.circle_has_family_plan(p_circle_id uuid)
 returns boolean
 language plpgsql
@@ -15,10 +17,6 @@ set search_path = ''
 as $$
 begin
   if p_circle_id is null then
-    return false;
-  end if;
-
-  if (select auth.uid()) is not null and not public.is_circle_member(p_circle_id) then
     return false;
   end if;
 
@@ -36,8 +34,8 @@ begin
 end;
 $$;
 
-revoke all on function public.circle_has_family_plan(uuid) from public, anon;
-grant execute on function public.circle_has_family_plan(uuid) to authenticated, service_role;
+revoke all on function public.circle_has_family_plan(uuid) from public, anon, authenticated;
+grant execute on function public.circle_has_family_plan(uuid) to service_role;
 
 -- 2. transfer_ownership: same as 20261116000006, plus the 1-circle rule for the new owner.
 create or replace function public.transfer_ownership(
