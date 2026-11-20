@@ -2,7 +2,7 @@ import { ThemeProvider } from '@carecircle/ui';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react-native';
 import { Slot } from 'expo-router';
 import { renderRouter } from 'expo-router/testing-library';
-import { Share } from 'react-native';
+import * as Sharing from 'expo-sharing';
 import OnboardingStartRoute from '../app/(onboarding)/start';
 import CircleRoute from '../app/circle';
 import en from '../i18n/en.json';
@@ -152,9 +152,7 @@ describe('CC-10 Delete account, transfer ownership, data export, and onboarding 
 
   it('2. exports the signed-in user data as JSON via export_user_data RPC and opens Share sheet', async () => {
     setupCircleMock('helper');
-    const shareSpy = jest
-      .spyOn(Share, 'share')
-      .mockResolvedValue({ action: Share.sharedAction } as never);
+    const shareSpy = jest.spyOn(Sharing, 'shareAsync').mockResolvedValue(undefined);
 
     const exportedPayload = {
       userId: HELPER_ID,
@@ -184,9 +182,11 @@ describe('CC-10 Delete account, transfer ownership, data export, and onboarding 
 
     await waitFor(() => {
       expect(mockRpc).toHaveBeenCalledWith('export_user_data');
-      expect(shareSpy).toHaveBeenCalledWith({
-        message: JSON.stringify(exportedPayload, null, 2),
-      });
+      expect(shareSpy).toHaveBeenCalledTimes(1);
+      expect(shareSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/\.json$/),
+        expect.objectContaining({ mimeType: 'application/json' }),
+      );
     });
 
     shareSpy.mockRestore();

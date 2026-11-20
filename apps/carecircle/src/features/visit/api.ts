@@ -9,6 +9,7 @@ import {
 } from '@carecircle/ai-gateway';
 import {
   circleRowSchema,
+  isNetworkFailureMessage,
   medicationRowSchema,
   taskRowSchema,
   validateAnalyticsEvent,
@@ -388,11 +389,6 @@ export function defaultTrackVisitNoteSaved(counts: {
   void getAppObservability()
     .analytics.track('cc_visit_note_saved', payload as { followUps: number; medChanges: number })
     .catch(() => undefined);
-}
-
-function isNetworkFailureMessage(message: string, code?: string): boolean {
-  if (code === 'NETWORK_ERROR') return true;
-  return /network|fetch failed|failed to fetch|offline|load failed/i.test(message);
 }
 
 export async function loadVisitNoteContext(deps: SummarizeVisitApiDeps = {}): Promise<{

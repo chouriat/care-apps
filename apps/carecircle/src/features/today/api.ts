@@ -5,6 +5,7 @@ import {
   circleSchema,
   doseEventRowSchema,
   doseEventSchema,
+  isNetworkFailureMessage,
   medicationRowSchema,
   medicationSchema,
   memberRoleSchema,
@@ -436,13 +437,6 @@ export async function loadCachedTodaySnapshot(
   } catch {
     return null;
   }
-}
-
-function isNetworkFailureMessage(message: string, code?: string): boolean {
-  if (code === 'NETWORK_ERROR') {
-    return true;
-  }
-  return /network|fetch failed|failed to fetch|offline|load failed/i.test(message);
 }
 
 function normalizeIsoTimestamp(value: unknown): unknown {

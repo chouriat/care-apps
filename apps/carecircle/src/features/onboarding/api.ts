@@ -1,4 +1,10 @@
-import { circleRowSchema, circleSchema, type Circle, type CircleRow } from '@carecircle/core';
+import {
+  circleRowSchema,
+  circleSchema,
+  isNetworkFailureMessage,
+  type Circle,
+  type CircleRow,
+} from '@carecircle/core';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { getSupabaseClient } from '../auth/api';
@@ -175,13 +181,6 @@ export type CreateCircleResult =
 export interface CreateCircleDeps {
   getClient?: () => Pick<SupabaseClient, 'rpc'>;
   trackCircleCreated?: () => void;
-}
-
-function isNetworkFailureMessage(message: string, code?: string): boolean {
-  if (code === 'NETWORK_ERROR') {
-    return true;
-  }
-  return /network|fetch failed|failed to fetch|offline|load failed/i.test(message);
 }
 
 // `snakeToCamel` from core converts one key string, not a whole row, so map the C1 row explicitly.

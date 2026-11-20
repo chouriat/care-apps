@@ -1,4 +1,9 @@
-import { validateAnalyticsEvent, type LogType, type MemberRole } from '@carecircle/core';
+import {
+  isNetworkFailureMessage,
+  validateAnalyticsEvent,
+  type LogType,
+  type MemberRole,
+} from '@carecircle/core';
 import { Share } from 'react-native';
 import en from '../../../i18n/en.json';
 import { getSupabaseClient } from '../auth/api';
@@ -83,11 +88,6 @@ export type ExportCareLogPdfResult =
       errorCode: 'QUOTA_EXCEEDED' | 'RANGE_INVALID' | 'NETWORK_ERROR' | 'EXPORT_FAILED';
       isOffline: boolean;
     };
-
-function isNetworkFailureMessage(message: string, code?: string): boolean {
-  if (code === 'NETWORK_ERROR') return true;
-  return /network|fetch failed|failed to fetch|offline|load failed/i.test(message);
-}
 
 const DATE_ONLY_REGEX = /^(\d{4})-(\d{2})-(\d{2})$/;
 

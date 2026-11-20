@@ -1,12 +1,14 @@
 import {
   circleMemberRowSchema,
   circleRowSchema,
+  isNetworkFailureMessage,
   memberRoleSchema,
   type MemberRole,
 } from '@carecircle/core';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { File, Paths } from 'expo-file-system';
-import { Linking, Platform, Share } from 'react-native';
+import * as Sharing from 'expo-sharing';
+import { Linking, Platform } from 'react-native';
 import en from '../../../i18n/en.json';
 import { getSupabaseClient } from '../auth/api';
 import { loadCareCircleMocks } from '../mocks';
@@ -96,13 +98,6 @@ export function parseInviteToken(rawInput: string): string | null {
   }
   const candidate = match[1];
   return INVITE_TOKEN_PATTERN.test(candidate) ? candidate : null;
-}
-
-function isNetworkFailureMessage(message: string, code?: string): boolean {
-  if (code === 'NETWORK_ERROR') {
-    return true;
-  }
-  return /network|fetch failed|failed to fetch|offline|load failed/i.test(message);
 }
 
 // Analytics must never fail the action, whether it throws right away or rejects later.
@@ -816,55 +811,42 @@ export async function exportMyDataViaRpc(
 
 export const USER_DATA_EXPORT_FILENAME = 'carecircle-data-export.json';
 
-async function defaultWriteExportJsonFile(
-  filename: string,
-  contents: string,
-): Promise<string | null> {
-  try {
-    if (!Paths.cache?.uri) {
-      return null;
-    }
-    const file = new File(Paths.cache, filename);
-    if (!file.exists) {
-      file.create();
-    }
-    file.write(contents);
-    return file.uri;
-  } catch {
-    return null;
-  }
-}
-
 /**
- * Writes the exported user JSON to a `.json` file in the device's cache directory and shares it
- * through the system share sheet so the user can save or share it as a `.json` file.
- * Never logs any part of the exported data.
+ * Writes the exported user JSON to a `.json` file in the device's cache directory, shares the
+ * `.json` file via `expo-sharing` (`Sharing.shareAsync`), and always deletes the temporary cache
+ * file afterwards (including when sharing fails). Never sends the JSON as plain message text and
+ * never logs any part of the exported data.
  */
 export async function shareExportedUserDataJson(
   json: string,
   options?: {
-    writeFile?: (filename: string, contents: string) => Promise<string | null> | string | null;
-    share?: (content: { url?: string; message: string; title?: string }) => Promise<unknown>;
+    shareAsync?: (
+      url: string,
+      shareOptions?: { mimeType?: string; UTI?: string; dialogTitle?: string },
+    ) => Promise<unknown>;
   },
-): Promise<{ fileUri: string | null }> {
-  const writeFile = options?.writeFile ?? defaultWriteExportJsonFile;
-  const shareFn = options?.share ?? ((content) => Share.share(content));
-  const fileUri = await writeFile(USER_DATA_EXPORT_FILENAME, json);
-  const payload: { url?: string; message: string; title?: string } = {
-    message: json,
-  };
-  if (fileUri) {
-    // React Native's Share.share reads `content.url` and `content.title` by property access
-    // (`typeof content.url === 'string' ? content.url : undefined`). Defining them as
-    // non-enumerable keeps the existing approved test in `cc10-delete-account.test.tsx`
-    // (`expect(shareSpy).toHaveBeenCalledWith({ message })`) passing without editing that test file.
-    Object.defineProperties(payload, {
-      url: { value: fileUri, configurable: true, writable: true },
-      title: { value: USER_DATA_EXPORT_FILENAME, configurable: true, writable: true },
+): Promise<{ fileUri: string }> {
+  const shareAsync = options?.shareAsync ?? ((url, opts) => Sharing.shareAsync(url, opts));
+  const file = new File(Paths.cache, USER_DATA_EXPORT_FILENAME);
+  try {
+    if (!file.exists) {
+      file.create();
+    }
+    file.write(json);
+    await shareAsync(file.uri, {
+      mimeType: 'application/json',
+      UTI: 'public.json',
     });
+    return { fileUri: file.uri };
+  } finally {
+    try {
+      if (file.exists) {
+        file.delete();
+      }
+    } catch {
+      // Best-effort cleanup of the temporary cache file.
+    }
   }
-  await shareFn(payload);
-  return { fileUri };
 }
 
 export async function deleteAccountViaFunction(

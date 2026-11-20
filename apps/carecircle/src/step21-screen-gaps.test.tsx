@@ -2,6 +2,7 @@ import * as UI from '@carecircle/ui';
 import { File, Paths } from 'expo-file-system';
 import { Stack } from 'expo-router';
 import { act, fireEvent, renderRouter, screen, waitFor, within } from 'expo-router/testing-library';
+import * as Sharing from 'expo-sharing';
 import type { ReactNode } from 'react';
 import { AppState, type AppStateStatus, StyleSheet } from 'react-native';
 import TabsLayout from '../app/(tabs)/_layout';
@@ -711,9 +712,7 @@ describe('Step 21 small screen gaps', () => {
     });
   });
 
-  it('5. Data export writes a .json file and shares its file url through the system share sheet without logging any exported data', async () => {
-    const sharedPayloads: Array<{ url?: string; message: string; title?: string }> = [];
-
+  it('5. Data export writes a .json file, shares it once as application/json via expo-sharing, deletes it afterwards (even when sharing throws), and logs nothing', async () => {
     const logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
     const infoSpy = jest.spyOn(console, 'info').mockImplementation(() => undefined);
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -729,20 +728,36 @@ describe('Step 21 small screen gaps', () => {
       2,
     );
 
-    const res = await shareExportedUserDataJson(sensitiveExportJson, {
-      share: async (payload) => {
-        sharedPayloads.push(payload);
-      },
+    const exportedFile = new File(Paths.cache, USER_DATA_EXPORT_FILENAME);
+    let contentsDuringShare: string | null = null;
+    const shareSpy = jest.spyOn(Sharing, 'shareAsync').mockImplementation(async (url) => {
+      const activeFile = new File(url);
+      expect(activeFile.exists).toBe(true);
+      contentsDuringShare = await activeFile.text();
     });
 
-    const exportedFile = new File(Paths.cache, USER_DATA_EXPORT_FILENAME);
+    const res = await shareExportedUserDataJson(sensitiveExportJson);
+
     expect(res.fileUri).toBe(exportedFile.uri);
     expect(exportedFile.uri.endsWith('.json')).toBe(true);
-    expect(await exportedFile.text()).toBe(sensitiveExportJson);
-    expect(sharedPayloads).toHaveLength(1);
-    expect(sharedPayloads[0]?.url).toBe(exportedFile.uri);
-    expect(sharedPayloads[0]?.title).toBe(USER_DATA_EXPORT_FILENAME);
-    expect(sharedPayloads[0]?.message).toBe(sensitiveExportJson);
+    expect(contentsDuringShare).toBe(sensitiveExportJson);
+    expect(shareSpy).toHaveBeenCalledTimes(1);
+    expect(shareSpy).toHaveBeenCalledWith(exportedFile.uri, {
+      mimeType: 'application/json',
+      UTI: 'public.json',
+    });
+    // Deleted after sharing returns
+    expect(new File(Paths.cache, USER_DATA_EXPORT_FILENAME).exists).toBe(false);
+
+    // Also deleted when sharing throws
+    shareSpy.mockImplementationOnce(async (url) => {
+      expect(new File(url).exists).toBe(true);
+      throw new Error('Share dialog dismissed with error');
+    });
+    await expect(shareExportedUserDataJson(sensitiveExportJson)).rejects.toThrow(
+      'Share dialog dismissed with error',
+    );
+    expect(new File(Paths.cache, USER_DATA_EXPORT_FILENAME).exists).toBe(false);
 
     const allConsoleCalls = JSON.stringify([
       ...logSpy.mock.calls,
@@ -752,5 +767,7 @@ describe('Step 21 small screen gaps', () => {
     ]);
     expect(allConsoleCalls).not.toContain('Evelyn');
     expect(allConsoleCalls).not.toContain('Metformin');
+
+    shareSpy.mockRestore();
   });
 });
