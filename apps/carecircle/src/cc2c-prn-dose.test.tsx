@@ -32,6 +32,7 @@ import MedsScreen from '../app/(tabs)/meds';
 import TasksScreen from '../app/(tabs)/tasks';
 import TodayScreen from '../app/(tabs)/today';
 import { createFakeTodayClient } from './__fixtures__/today-fake-client';
+import { getAppObservability } from './features/observability/api';
 import {
   loadQueuedDoseCheckOffs,
   memoryTodayStorage,
@@ -319,6 +320,255 @@ describe('CC-2c "Gave a dose now" for as-needed medicines on Today', () => {
 
     await act(async () => {
       view.unmount();
+    });
+  });
+
+  it('double tap before the RPC resolves sends exactly one log_prn_dose call', async () => {
+    const tables = seedTables();
+    const { client: baseClient } = createFakeTodayClient({ tables });
+    const deferredRpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+    let resolveRpc!: (res: { data: unknown; error: null }) => void;
+    const pendingRpc = new Promise<{ data: unknown; error: null }>((resolve) => {
+      resolveRpc = resolve;
+    });
+
+    const deps: TodayDeps = {
+      getClient: () =>
+        ({
+          from: (baseClient as unknown as { from: unknown }).from,
+          rpc: (fn: string, args: Record<string, unknown>) => {
+            deferredRpcCalls.push({ fn, args });
+            return pendingRpc;
+          },
+        }) as unknown as ReturnType<NonNullable<TodayDeps['getClient']>>,
+      getUserId: async () => OWNER_ID,
+      storage: memoryTodayStorage,
+      now: () => NOW,
+    };
+
+    const routes = {
+      _layout: () => <Stack screenOptions={{ headerShown: false }} />,
+      '(tabs)/_layout': TabsLayout,
+      '(tabs)/today': () => <TodayScreen deps={deps} referenceNow={NOW} />,
+      '(tabs)/meds': () => <MedsScreen />,
+      '(tabs)/calendar': () => <CalendarScreen referenceNow={NOW} />,
+      '(tabs)/tasks': () => <TasksScreen />,
+    };
+
+    const view = await renderRouter(routes, { initialUrl: '/today', wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`today-prn-give-${PRN_MED_ID}`)).toBeTruthy();
+    });
+
+    const giveButton = within(screen.getByTestId(`today-prn-give-${PRN_MED_ID}`)).getByRole(
+      'button',
+    );
+    await fireEvent.press(giveButton);
+    await fireEvent.press(giveButton);
+
+    expect(deferredRpcCalls).toEqual([
+      {
+        fn: 'log_prn_dose',
+        args: { medicationId: PRN_MED_ID },
+      },
+    ]);
+
+    await act(async () => {
+      resolveRpc({
+        data: {
+          id: PRN_DOSE_ID,
+          medication_id: PRN_MED_ID,
+          circle_id: CIRCLE_ID,
+          due_at: NOW_ISO,
+          status: 'given',
+          acted_by: OWNER_ID,
+          acted_at: NOW_ISO,
+        },
+        error: null,
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/09:15/)).toBeTruthy();
+      expect(screen.getByText('Given')).toBeTruthy();
+    });
+    expect(deferredRpcCalls).toHaveLength(1);
+
+    await act(async () => {
+      view.unmount();
+    });
+  });
+
+  it('shows a notice, displays no Given row, and queues nothing when log_prn_dose returns P0001 DUPLICATE_PRN_DOSE or NOT_AS_NEEDED', async () => {
+    for (const refusalCode of ['DUPLICATE_PRN_DOSE', 'NOT_AS_NEEDED'] as const) {
+      const tables = seedTables();
+      const { client, rpcCalls } = createFakeTodayClient({
+        tables,
+        rpc: () => ({
+          data: null,
+          error: { code: 'P0001', message: refusalCode },
+        }),
+      });
+
+      const deps: TodayDeps = {
+        getClient: () => client,
+        getUserId: async () => OWNER_ID,
+        storage: memoryTodayStorage,
+        now: () => NOW,
+      };
+
+      const routes = {
+        _layout: () => <Stack screenOptions={{ headerShown: false }} />,
+        '(tabs)/_layout': TabsLayout,
+        '(tabs)/today': () => <TodayScreen deps={deps} referenceNow={NOW} />,
+        '(tabs)/meds': () => <MedsScreen />,
+        '(tabs)/calendar': () => <CalendarScreen referenceNow={NOW} />,
+        '(tabs)/tasks': () => <TasksScreen />,
+      };
+
+      const view = await renderRouter(routes, { initialUrl: '/today', wrapper });
+
+      await waitFor(() => {
+        expect(screen.getByTestId(`today-prn-give-${PRN_MED_ID}`)).toBeTruthy();
+      });
+
+      const giveButton = within(screen.getByTestId(`today-prn-give-${PRN_MED_ID}`)).getByRole(
+        'button',
+      );
+      await fireEvent.press(giveButton);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('today-notice-checkOffFailed')).toBeTruthy();
+      });
+
+      expect(rpcCalls).toEqual([{ fn: 'log_prn_dose', args: { medicationId: PRN_MED_ID } }]);
+      expect(screen.queryByText('Given')).toBeNull();
+      expect(screen.queryByTestId(`today-dose-row-${PRN_DOSE_ID}`)).toBeNull();
+      const queued = await loadQueuedDoseCheckOffs(memoryTodayStorage, OWNER_ID);
+      expect(queued).toEqual([]);
+
+      await act(async () => {
+        view.unmount();
+      });
+      resetTodayState();
+    }
+  });
+
+  it('shows an earlier given as-needed dose today at 07:30 circle time in today-prn-section for owner, helper, and viewer, and shows its time exactly once on Today', async () => {
+    // 2026-11-18T12:30:00.000Z is 07:30 in America/New_York (EST, UTC-5)
+    const EARLIER_PRN_ISO = '2026-11-18T12:30:00.000Z';
+    const DAILY_DOSE_ISO = '2026-11-18T13:00:00.000Z';
+
+    for (const userId of [OWNER_ID, HELPER_ID, VIEWER_ID]) {
+      const setup = setupTodayRouter({ userId });
+      setup.tables.dose_events = [
+        {
+          id: PRN_DOSE_ID,
+          medication_id: PRN_MED_ID,
+          circle_id: CIRCLE_ID,
+          due_at: EARLIER_PRN_ISO,
+          status: 'given',
+          acted_by: OWNER_ID,
+          acted_at: EARLIER_PRN_ISO,
+        },
+        {
+          id: 'c2cd0002-0000-4000-8000-000000000002',
+          medication_id: DAILY_MED_ID,
+          circle_id: CIRCLE_ID,
+          due_at: DAILY_DOSE_ISO,
+          status: 'pending',
+          acted_by: null,
+          acted_at: null,
+        },
+      ];
+
+      const view = await renderRouter(setup.routes, { initialUrl: '/today', wrapper });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('today-prn-section')).toBeTruthy();
+      });
+
+      const prnSection = screen.getByTestId('today-prn-section');
+      expect(within(prnSection).getByText(/07:30/)).toBeTruthy();
+      // Appears once in today-prn-section and nowhere else (not duplicated among scheduled doses)
+      expect(screen.getAllByText(/07:30/)).toHaveLength(1);
+      expect(screen.queryByTestId('today-dose-time-07:30')).toBeNull();
+
+      await act(async () => {
+        view.unmount();
+      });
+      resetTodayState();
+    }
+  });
+
+  it('sends cc_dose_given once with { status: "given" } and nothing else on a successful tap, and sends nothing on a failed tap', async () => {
+    const trackSpy = jest
+      .spyOn(getAppObservability().analytics, 'track')
+      .mockResolvedValue(undefined);
+
+    // 1. Successful tap sends cc_dose_given once with { status: 'given' } only
+    const okSetup = setupTodayRouter({ userId: OWNER_ID });
+    const okView = await renderRouter(okSetup.routes, { initialUrl: '/today', wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`today-prn-give-${PRN_MED_ID}`)).toBeTruthy();
+    });
+    await fireEvent.press(
+      within(screen.getByTestId(`today-prn-give-${PRN_MED_ID}`)).getByRole('button'),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Given')).toBeTruthy();
+    });
+    expect(trackSpy).toHaveBeenCalledTimes(1);
+    expect(trackSpy.mock.calls).toEqual([['cc_dose_given', { status: 'given' }]]);
+
+    await act(async () => {
+      okView.unmount();
+    });
+    resetTodayState();
+
+    // 2. Failed tap sends nothing
+    trackSpy.mockClear();
+    const failTables = seedTables();
+    const { client: failClient } = createFakeTodayClient({
+      tables: failTables,
+      rpc: () => ({
+        data: null,
+        error: { code: 'P0001', message: 'DUPLICATE_PRN_DOSE' },
+      }),
+    });
+    const failDeps: TodayDeps = {
+      getClient: () => failClient,
+      getUserId: async () => OWNER_ID,
+      storage: memoryTodayStorage,
+      now: () => NOW,
+    };
+    const failRoutes = {
+      _layout: () => <Stack screenOptions={{ headerShown: false }} />,
+      '(tabs)/_layout': TabsLayout,
+      '(tabs)/today': () => <TodayScreen deps={failDeps} referenceNow={NOW} />,
+      '(tabs)/meds': () => <MedsScreen />,
+      '(tabs)/calendar': () => <CalendarScreen referenceNow={NOW} />,
+      '(tabs)/tasks': () => <TasksScreen />,
+    };
+
+    const failView = await renderRouter(failRoutes, { initialUrl: '/today', wrapper });
+    await waitFor(() => {
+      expect(screen.getByTestId(`today-prn-give-${PRN_MED_ID}`)).toBeTruthy();
+    });
+    await fireEvent.press(
+      within(screen.getByTestId(`today-prn-give-${PRN_MED_ID}`)).getByRole('button'),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('today-notice-checkOffFailed')).toBeTruthy();
+    });
+    expect(trackSpy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      failView.unmount();
     });
   });
 });

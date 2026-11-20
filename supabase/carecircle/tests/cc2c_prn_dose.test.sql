@@ -28,7 +28,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(26);
+select plan(29);
 
 do $$
 declare
@@ -444,6 +444,80 @@ select is(
       and status = 'missed'::public.dose_status),
   '4/0',
   '26. mark-missed query leaves all 4 PRN dose_events rows as given and marks 0 as missed'
+);
+
+-- 27-29. Explicit 1-second window across separate transactions (different microseconds):
+-- Two phones tapping within 1 second run in separate transactions where `now()` differs by
+-- milliseconds, so `unique (medication_id, due_at)` alone would not catch them.
+select pg_temp.as_postgres();
+
+insert into public.medications (id, circle_id, name, strength, dose_text, schedule, start_date, active, source)
+values
+  (
+    'c2c20007-0000-4000-8000-000000000007'::uuid,
+    'c2cc0001-0000-4000-8000-000000000001'::uuid,
+    'Cetirizine',
+    '10 mg',
+    '1 tablet as needed',
+    '{"kind":"as_needed"}'::jsonb,
+    current_date - 5,
+    true,
+    'manual'
+  ),
+  (
+    'c2c20008-0000-4000-8000-000000000008'::uuid,
+    'c2cc0001-0000-4000-8000-000000000001'::uuid,
+    'Ondansetron',
+    '4 mg',
+    '1 tablet as needed',
+    '{"kind":"as_needed"}'::jsonb,
+    current_date - 5,
+    true,
+    'manual'
+  );
+
+insert into public.dose_events (id, medication_id, circle_id, due_at, status, acted_by, acted_at)
+values
+  (
+    'c2cd0007-0000-4000-8000-000000000007'::uuid,
+    'c2c20007-0000-4000-8000-000000000007'::uuid,
+    'c2cc0001-0000-4000-8000-000000000001'::uuid,
+    now() - interval '500 milliseconds',
+    'given',
+    'c2c00001-0000-4000-8000-000000000001'::uuid,
+    now() - interval '500 milliseconds'
+  ),
+  (
+    'c2cd0008-0000-4000-8000-000000000008'::uuid,
+    'c2c20008-0000-4000-8000-000000000008'::uuid,
+    'c2cc0001-0000-4000-8000-000000000001'::uuid,
+    now() - interval '2 seconds',
+    'given',
+    'c2c00001-0000-4000-8000-000000000001'::uuid,
+    now() - interval '2 seconds'
+  );
+
+select pg_temp.as_user('c2c00002-0000-4000-8000-000000000002'::uuid);
+select is(
+  pg_temp.call_log_prn('c2c20007-0000-4000-8000-000000000007'::uuid),
+  'ERROR P0001: DUPLICATE_PRN_DOSE',
+  '27. log_prn_dose refuses when a given dose was recorded 500 ms ago (different transaction timestamp within 1 second)'
+);
+
+select pg_temp.as_postgres();
+select is(
+  (select count(*)::int from public.dose_events where medication_id = 'c2c20007-0000-4000-8000-000000000007'::uuid),
+  1,
+  '28. 500 ms DUPLICATE_PRN_DOSE refusal adds no dose_events row'
+);
+
+select pg_temp.as_user('c2c00002-0000-4000-8000-000000000002'::uuid);
+select is(
+  pg_temp.call_log_prn('c2c20008-0000-4000-8000-000000000008'::uuid)
+    || '/count=' ||
+  (select count(*)::int from public.dose_events where medication_id = 'c2c20008-0000-4000-8000-000000000008'::uuid)::text,
+  'given/c2c20008-0000-4000-8000-000000000008/c2cc0001-0000-4000-8000-000000000001/c2c00002-0000-4000-8000-000000000002/true/true/count=2',
+  '29. log_prn_dose succeeds when the previous given dose was 2 seconds ago'
 );
 
 select * from finish();
