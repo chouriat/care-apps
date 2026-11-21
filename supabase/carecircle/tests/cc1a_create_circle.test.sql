@@ -45,6 +45,8 @@ insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, ra
 values
   ('cc1a0001-0000-4000-8000-000000000001'::uuid, '00000000-0000-0000-0000-000000000000'::uuid, 'authenticated', 'authenticated', 'cc1a-user1@example.test', '{}'::jsonb, '{}'::jsonb, now(), now()),
   ('cc1a0002-0000-4000-8000-000000000002'::uuid, '00000000-0000-0000-0000-000000000000'::uuid, 'authenticated', 'authenticated', 'cc1a-user2@example.test', '{}'::jsonb, '{}'::jsonb, now(), now());
+-- CC-11 (Claude-approved): seed health-data consent for the inserted test users.
+update public.users_profile set health_consent_at = now() where user_id in ('cc1a0001-0000-4000-8000-000000000001'::uuid, 'cc1a0002-0000-4000-8000-000000000002'::uuid);
 
 -- 2. Anonymous call is refused
 set local role anon;

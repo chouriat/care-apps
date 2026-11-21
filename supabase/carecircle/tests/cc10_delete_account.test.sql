@@ -75,6 +75,8 @@ values
   ('cc100000-0000-4000-8000-000000000003'::uuid, '00000000-0000-4000-8000-000000000000'::uuid, 'authenticated', 'authenticated', 'cc10-u03@example.test', '{}'::jsonb, '{}'::jsonb, now(), now()),
   ('cc100000-0000-4000-8000-000000000004'::uuid, '00000000-0000-4000-8000-000000000000'::uuid, 'authenticated', 'authenticated', 'cc10-u04@example.test', '{}'::jsonb, '{}'::jsonb, now(), now()),
   ('cc100000-0000-4000-8000-000000000005'::uuid, '00000000-0000-4000-8000-000000000000'::uuid, 'authenticated', 'authenticated', 'cc10-u05@example.test', '{}'::jsonb, '{}'::jsonb, now(), now());
+-- CC-11 (Claude-approved): seed health-data consent for the inserted test users.
+update public.users_profile set health_consent_at = now() where user_id in ('cc100000-0000-4000-8000-000000000001'::uuid, 'cc100000-0000-4000-8000-000000000002'::uuid, 'cc100000-0000-4000-8000-000000000003'::uuid, 'cc100000-0000-4000-8000-000000000004'::uuid, 'cc100000-0000-4000-8000-000000000005'::uuid);
 
 insert into public.users_profile (user_id, display_name, locale, timezone)
 values

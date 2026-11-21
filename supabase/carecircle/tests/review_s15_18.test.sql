@@ -59,6 +59,8 @@ select
   now(),
   now()
 from generate_series(1, 5) as g(i);
+-- CC-11 (Claude-approved): seed health-data consent for the inserted test users.
+update public.users_profile set health_consent_at = now() where user_id in (select ('5a180000-0000-4000-8000-' || lpad(i::text, 12, '0'))::uuid from generate_series(1, 5) as g(i));
 
 insert into public.entitlements (user_id, entitlement, active, expires_at)
 values ('5a180000-0000-4000-8000-000000000001'::uuid, 'carecircle_family', true, now() + interval '30 days');
