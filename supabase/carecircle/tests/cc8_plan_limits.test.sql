@@ -81,6 +81,8 @@ select
   now(),
   now()
 from generate_series(1, 15) as g(i);
+-- CC-11 (Claude-approved): seed health-data consent for the inserted test users.
+update public.users_profile set health_consent_at = now() where user_id in (select ('cc800000-0000-4000-8000-' || lpad(i::text, 12, '0'))::uuid from generate_series(1, 15) as g(i));
 
 create temp table tmp_cc8 (
   key text primary key,

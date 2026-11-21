@@ -209,6 +209,24 @@
     "joinUsedMessage": "This invite link has already been used. Ask the circle owner for a new link.",
     "joinCircleFullMessage": "This circle is full. Ask the owner."
   },
+  "consent": {
+    "title": "Explicit health-data consent",
+    "body": "CareCircle stores health information about the person you care for—including medications, doses, appointments, and visit notes—so your care circle can coordinate daily care.",
+    "privacyLinkLabel": "Read our Privacy Policy",
+    "privacyLinkA11y": "Open Privacy Policy",
+    "checkboxLabel": "I agree to CareCircle storing this care data for the person I care for.",
+    "continueCta": "Continue",
+    "continueA11y": "Continue and record consent",
+    "declineCta": "Decline",
+    "declineA11y": "Decline consent",
+    "declinedMessage": "CareCircle needs your consent before creating or joining a care circle. You can sign out below, or tick the box above if you decide to continue.",
+    "signOutCta": "Sign out",
+    "signOutA11y": "Sign out of CareCircle",
+    "offlineTitle": "Connection needed",
+    "offlineMessage": "Recording your consent requires an internet connection. Nothing was saved—reconnect and try again.",
+    "errorTitle": "Not saved",
+    "errorMessage": "We could not record your consent right now. Nothing was saved—please try again."
+  },
   "circle": {
     "title": "Circle Settings",
     "membersHeading": "Circle members",

@@ -1,0 +1,6 @@
+appId: app.carecircle.mobile
+---
+- tapOn:
+    id: 'health-consent-checkbox'
+- tapOn:
+    id: 'health-consent-continue-button'

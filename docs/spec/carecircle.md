@@ -10,7 +10,7 @@ CareCircle MVP is one shared care plan per parent: meds with dose tracking, appo
 
 ### Auth
 
-Supabase Auth with Sign in with Apple, Google, and email magic link. No passwords. A `users_profile(user_id uuid pk, display_name text, locale text, timezone text, created_at timestamptz)` table exists. `timezone` is an IANA name and drives all reminder scheduling.
+Supabase Auth with Sign in with Apple, Google, and email magic link. No passwords. A `users_profile(user_id uuid pk, display_name text, locale text, timezone text, created_at timestamptz, health_consent_at timestamptz)` table exists. `health_consent_at` is null until the person gives explicit consent to health data; it is set only by `give_health_consent()` and never changes after. `timezone` is an IANA name and drives all reminder scheduling.
 
 CareCircle has its own Supabase project (each app has its own).
 

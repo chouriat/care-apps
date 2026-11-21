@@ -152,6 +152,8 @@ select ('cc1b00' || lpad(n::text, 2, '0') || '-0000-4000-8000-0000000000' || lpa
        '00000000-0000-0000-0000-000000000000'::uuid, 'authenticated', 'authenticated',
        'cc1b-user-' || n || '@example.test', '{}'::jsonb, '{}'::jsonb, now(), now()
   from generate_series(1, 16) as n;
+-- CC-11 (Claude-approved): seed health-data consent for the inserted test users.
+update public.users_profile set health_consent_at = now() where user_id in (select ('cc1b00' || lpad(n::text, 2, '0') || '-0000-4000-8000-0000000000' || lpad(n::text, 2, '0'))::uuid from generate_series(1, 16) as n);
 
 -- Seed circles (as postgres, no signed-in user)
 select pg_temp.as_postgres();

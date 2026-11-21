@@ -27,6 +27,11 @@ env:
     commands:
       - runScript: scripts/magic-link-from-mailpit.js
 - openLink: ${output.callbackUrl}
+- runFlow:
+    when:
+      visible:
+        id: 'health-consent-screen'
+    file: subflows/give-health-consent.yaml
 - assertVisible:
     id: 'onboarding-start-screen'
 - tapOn:
@@ -69,6 +74,11 @@ env:
     commands:
       - runScript: scripts/magic-link-from-mailpit.js
 - openLink: ${output.callbackUrl}
+- runFlow:
+    when:
+      visible:
+        id: 'health-consent-screen'
+    file: subflows/give-health-consent.yaml
 - assertVisible:
     id: 'onboarding-start-screen'
 - tapOn:
