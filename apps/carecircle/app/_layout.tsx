@@ -59,6 +59,7 @@ export default function RootLayout() {
       : null;
 
   const [consentState, setConsentState] = useState<ConsentGateState | null>(null);
+  const [gatedRoute, setGatedRoute] = useState<string | null>(null);
 
   useEffect(() => {
     const match = /^\/invite\/([^/?#]+)/.exec(pathname);
@@ -70,6 +71,7 @@ export default function RootLayout() {
   useEffect(() => {
     if (!activeUserId) {
       setConsentState(null);
+      setGatedRoute(null);
       return;
     }
 
@@ -111,10 +113,32 @@ export default function RootLayout() {
       ? consentState.status
       : 'loading';
 
+  const currentlyGated = isConsentGatedPathname(pathname, getPendingInviteToken() !== null);
+
+  useEffect(() => {
+    if (!activeUserId) {
+      return;
+    }
+    if (effectiveConsentStatus !== 'consented' && currentlyGated) {
+      const normalizedTarget = pathname === '/start' ? '/(onboarding)/start' : pathname;
+      setGatedRoute((prev) => (prev === normalizedTarget ? prev : normalizedTarget));
+      return;
+    }
+    if (effectiveConsentStatus === 'consented' && gatedRoute !== null) {
+      const target = gatedRoute;
+      setGatedRoute(null);
+      const alreadyAtTarget =
+        pathname === target || (target === '/(onboarding)/start' && pathname === '/start');
+      if (target !== '/' && !alreadyAtTarget) {
+        router.replace(target as never);
+      }
+    }
+  }, [activeUserId, currentlyGated, effectiveConsentStatus, gatedRoute, pathname, router]);
+
   const needsConsentGate =
     activeUserId !== null &&
     effectiveConsentStatus !== 'consented' &&
-    isConsentGatedPathname(pathname, getPendingInviteToken() !== null);
+    (currentlyGated || gatedRoute !== null);
 
   return (
     <ThemeProvider>
