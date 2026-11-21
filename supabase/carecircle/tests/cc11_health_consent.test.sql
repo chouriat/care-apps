@@ -71,7 +71,7 @@ begin
 end;
 $$;
 
--- Dynamic helpers so all 24 pgTAP checks execute cleanly even before the CC-11 migration exists on main.
+-- Every helper catches SQL errors and returns text so all 24 checks run to finish() on today's main.
 create or replace function pg_temp.read_consent_iso(p_user_id uuid)
 returns text
 language plpgsql
@@ -131,6 +131,24 @@ exception
 end;
 $$;
 
+create or replace function pg_temp.call_give_consent_status()
+returns text
+language plpgsql
+as $$
+declare
+  v_ts timestamptz;
+begin
+  execute 'select public.give_health_consent()' into v_ts;
+  if v_ts is null then
+    return 'NULL';
+  end if;
+  return 'OK';
+exception
+  when others then
+    return 'ERROR ' || sqlstate || ': ' || sqlerrm;
+end;
+$$;
+
 create or replace function pg_temp.call_create_circle(
   p_name text,
   p_recipient text,
@@ -165,6 +183,40 @@ exception
 end;
 $$;
 
+create or replace function pg_temp.call_export_consent_summary()
+returns text
+language plpgsql
+as $$
+declare
+  v_payload jsonb;
+  v_has_key boolean;
+  v_is_non_null boolean;
+begin
+  v_payload := public.export_user_data();
+  v_has_key := (v_payload->'profile') ? 'health_consent_at';
+  v_is_non_null := (v_payload->'profile'->>'health_consent_at') is not null;
+  return coalesce(v_has_key::text, 'false') || '/' || coalesce(v_is_non_null::text, 'false');
+exception
+  when others then
+    return 'ERROR ' || sqlstate || ': ' || sqlerrm;
+end;
+$$;
+
+create or replace function pg_temp.call_delete_account()
+returns text
+language plpgsql
+as $$
+declare
+  v_res jsonb;
+begin
+  v_res := public.delete_own_account();
+  return coalesce(v_res->>'ok', 'null');
+exception
+  when others then
+    return 'ERROR ' || sqlstate || ': ' || sqlerrm;
+end;
+$$;
+
 grant execute on all functions in schema pg_temp to authenticated, anon, service_role;
 
 -- 1-2. Column existence, type, nullability, and column-level UPDATE privilege
@@ -193,13 +245,15 @@ select is(
   '2. authenticated role does not have direct UPDATE privilege on users_profile.health_consent_at'
 );
 
--- Seed users u01..u06:
+-- Seed users u01..u08:
 -- u01: gives consent, tests idempotency and export_user_data
--- u02: attempts create_circle without consent, then gives consent, creates circle, deletes account
--- u03: attempts accept_invite without consent, then gives consent, accepts invite
--- u04: owner of an existing circle with a valid invite and a full 2-seat free circle
--- u05: pre-CC-11 owner of an existing circle with health_consent_at = NULL
+-- u02: attempts create_circle without consent (refused)
+-- u03: attempts accept_invite without consent (refused)
+-- u04: owner of an existing Family circle with two valid 64-char invite tokens
+-- u05: pre-CC-11 owner of a full 2-seat Free circle with health_consent_at = NULL
 -- u06: pre-CC-11 helper in u05's circle with health_consent_at = NULL (tests reads, export, delete)
+-- u07: gives consent, creates a circle, then deletes own account
+-- u08: gives consent, accepts an invite
 select pg_temp.as_postgres();
 
 insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -212,11 +266,20 @@ select ('cc11000' || n::text || '-0000-4000-8000-00000000000' || n::text)::uuid,
        '{}'::jsonb,
        now(),
        now()
-  from generate_series(1, 6) as n;
+  from generate_series(1, 8) as n;
+
+-- Give u04 an active carecircle_family entitlement so Circle 1 has 8 seats (independent of u03's check)
+insert into public.entitlements (user_id, entitlement, active, expires_at)
+values (
+  'cc110004-0000-4000-8000-000000000004'::uuid,
+  'carecircle_family',
+  true,
+  now() + interval '30 days'
+);
 
 -- Pre-seed existing circles (simulating circles created before CC-11 deployed):
--- Circle 1 (owned by u04, open seat on Free plan with valid invite token 'cc11-open-invite-token-0001')
--- Circle 2 (owned by u05 with helper u06 -> full 2-seat Free circle, valid invite token 'cc11-full-invite-token-0002', plus 1 medication)
+-- Circle 1 (owned by u04, Family plan, two 64-char hex invite tokens)
+-- Circle 2 (owned by u05 with helper u06 -> full 2-seat Free circle, 64-char hex invite token, plus 1 medication)
 insert into public.circles (id, name, care_recipient_name, timezone, created_by)
 values
   ('cc11c001-0000-4000-8000-000000000001'::uuid, 'Open Circle', 'Evelyn', 'Europe/Paris', 'cc110004-0000-4000-8000-000000000004'::uuid),
@@ -230,8 +293,27 @@ values
 
 insert into public.invites (id, circle_id, token, role, expires_at)
 values
-  ('cc11a001-0000-4000-8000-000000000001'::uuid, 'cc11c001-0000-4000-8000-000000000001'::uuid, 'cc11-open-invite-token-0001', 'helper', now() + interval '7 days'),
-  ('cc11a002-0000-4000-8000-000000000002'::uuid, 'cc11c002-0000-4000-8000-000000000002'::uuid, 'cc11-full-invite-token-0002', 'helper', now() + interval '7 days');
+  (
+    'cc11a001-0000-4000-8000-000000000001'::uuid,
+    'cc11c001-0000-4000-8000-000000000001'::uuid,
+    'cc110001111122223333444455556666777788889999aaaabbbbccccdddd0001',
+    'helper',
+    now() + interval '7 days'
+  ),
+  (
+    'cc11a002-0000-4000-8000-000000000002'::uuid,
+    'cc11c002-0000-4000-8000-000000000002'::uuid,
+    'cc110002111122223333444455556666777788889999aaaabbbbccccdddd0002',
+    'helper',
+    now() + interval '7 days'
+  ),
+  (
+    'cc11a003-0000-4000-8000-000000000003'::uuid,
+    'cc11c001-0000-4000-8000-000000000001'::uuid,
+    'cc110003111122223333444455556666777788889999aaaabbbbccccdddd0003',
+    'helper',
+    now() + interval '7 days'
+  );
 
 insert into public.medications (id, circle_id, name, strength, dose_text, schedule, start_date, active, source)
 values (
@@ -386,7 +468,7 @@ select is(
 select pg_temp.as_user('cc110003-0000-4000-8000-000000000003'::uuid);
 select set_config(
   'cc11.accept_no_consent',
-  pg_temp.call_accept_invite('cc11-open-invite-token-0001'),
+  pg_temp.call_accept_invite('cc110001111122223333444455556666777788889999aaaabbbbccccdddd0001'),
   true
 );
 select is(
@@ -399,7 +481,7 @@ select is(
 -- u03 without consent must receive CONSENT_REQUIRED first.
 select set_config(
   'cc11.accept_order',
-  pg_temp.call_accept_invite('cc11-full-invite-token-0002'),
+  pg_temp.call_accept_invite('cc110002111122223333444455556666777788889999aaaabbbbccccdddd0002'),
   true
 );
 select is(
@@ -418,33 +500,36 @@ select is(
 );
 
 -- 19-20. After give_health_consent(), create_circle and accept_invite work as before
-select pg_temp.as_user('cc110002-0000-4000-8000-000000000002'::uuid);
-select set_config('cc11.u02_consent', pg_temp.call_give_consent(), true);
+-- Uses dedicated users u07 and u08 (and invite cc11a003) so each check is independent of checks 13 and 16.
+select pg_temp.as_user('cc110007-0000-4000-8000-000000000007'::uuid);
+select set_config('cc11.u07_consent', pg_temp.call_give_consent_status(), true);
 select set_config(
-  'cc11.u02_create',
+  'cc11.u07_create',
   pg_temp.call_create_circle('Consent Circle', 'Nadia', 'Europe/Paris'),
   true
 );
 select pg_temp.as_postgres();
 select is(
-  current_setting('cc11.u02_create')
-    || '/circles=' || (select count(*)::int from public.circles where created_by = 'cc110002-0000-4000-8000-000000000002'::uuid)::text,
-  'OK:Consent Circle:Nadia:Europe/Paris/circles=1',
+  current_setting('cc11.u07_consent')
+    || '/' || current_setting('cc11.u07_create')
+    || '/circles=' || (select count(*)::int from public.circles where created_by = 'cc110007-0000-4000-8000-000000000007'::uuid)::text,
+  'OK/OK:Consent Circle:Nadia:Europe/Paris/circles=1',
   '19. after give_health_consent, create_circle succeeds and writes the circle and owner membership'
 );
 
-select pg_temp.as_user('cc110003-0000-4000-8000-000000000003'::uuid);
-select set_config('cc11.u03_consent', pg_temp.call_give_consent(), true);
+select pg_temp.as_user('cc110008-0000-4000-8000-000000000008'::uuid);
+select set_config('cc11.u08_consent', pg_temp.call_give_consent_status(), true);
 select set_config(
-  'cc11.u03_accept',
-  pg_temp.call_accept_invite('cc11-open-invite-token-0001'),
+  'cc11.u08_accept',
+  pg_temp.call_accept_invite('cc110003111122223333444455556666777788889999aaaabbbbccccdddd0003'),
   true
 );
 select pg_temp.as_postgres();
 select is(
-  current_setting('cc11.u03_accept')
-    || '/used_by=' || coalesce((select used_by::text from public.invites where id = 'cc11a001-0000-4000-8000-000000000001'::uuid), 'NULL'),
-  'OK:helper/used_by=cc110003-0000-4000-8000-000000000003',
+  current_setting('cc11.u08_consent')
+    || '/' || current_setting('cc11.u08_accept')
+    || '/used_by=' || coalesce((select used_by::text from public.invites where id = 'cc11a003-0000-4000-8000-000000000003'::uuid), 'NULL'),
+  'OK/OK:helper/used_by=cc110008-0000-4000-8000-000000000008',
   '20. after give_health_consent, accept_invite succeeds and marks the invite used_by'
 );
 
@@ -460,48 +545,27 @@ select is(
 
 -- 22-24. export_user_data includes health_consent_at, and delete_own_account still works with and without consent
 select pg_temp.as_user('cc110001-0000-4000-8000-000000000001'::uuid);
-select set_config(
-  'cc11.u01_export_has_key',
-  ((public.export_user_data()->'profile') ? 'health_consent_at')::text,
-  true
-);
-select set_config(
-  'cc11.u01_export_non_null',
-  ((public.export_user_data()->'profile'->>'health_consent_at') is not null)::text,
-  true
-);
+select set_config('cc11.u01_export', pg_temp.call_export_consent_summary(), true);
 select pg_temp.as_user('cc110006-0000-4000-8000-000000000006'::uuid);
-select set_config(
-  'cc11.u06_export_has_key',
-  ((public.export_user_data()->'profile') ? 'health_consent_at')::text,
-  true
-);
-select set_config(
-  'cc11.u06_export_is_null',
-  ((public.export_user_data()->'profile'->>'health_consent_at') is null)::text,
-  true
-);
+select set_config('cc11.u06_export', pg_temp.call_export_consent_summary(), true);
 select is(
-  current_setting('cc11.u01_export_has_key')
-    || '/' || current_setting('cc11.u01_export_non_null')
-    || '/' || current_setting('cc11.u06_export_has_key')
-    || '/' || current_setting('cc11.u06_export_is_null'),
-  'true/true/true/true',
+  current_setting('cc11.u01_export') || '/' || current_setting('cc11.u06_export'),
+  'true/true/true/false',
   '22. export_user_data includes profile.health_consent_at (timestamp when given, JSON null when not given)'
 );
 
-select pg_temp.as_user('cc110002-0000-4000-8000-000000000002'::uuid);
-select set_config('cc11.u02_del', (public.delete_own_account()->>'ok'), true);
+select pg_temp.as_user('cc110007-0000-4000-8000-000000000007'::uuid);
+select set_config('cc11.u07_del', pg_temp.call_delete_account(), true);
 select pg_temp.as_postgres();
 select is(
-  current_setting('cc11.u02_del')
-    || '/left=' || (select count(*)::int from auth.users where id = 'cc110002-0000-4000-8000-000000000002'::uuid)::text,
+  current_setting('cc11.u07_del')
+    || '/left=' || (select count(*)::int from auth.users where id = 'cc110007-0000-4000-8000-000000000007'::uuid)::text,
   'true/left=0',
   '23. delete_own_account succeeds for a consented solo circle owner'
 );
 
 select pg_temp.as_user('cc110006-0000-4000-8000-000000000006'::uuid);
-select set_config('cc11.u06_del', (public.delete_own_account()->>'ok'), true);
+select set_config('cc11.u06_del', pg_temp.call_delete_account(), true);
 select pg_temp.as_postgres();
 select is(
   current_setting('cc11.u06_del')
