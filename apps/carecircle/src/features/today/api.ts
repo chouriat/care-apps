@@ -58,6 +58,23 @@ export interface TodayDoseGroup {
   doses: TodayDoseItem[];
 }
 
+export interface TodayPrnGivenDose {
+  id: string;
+  dueAt: string;
+  localTime: string;
+  actedBy: string | null;
+  actedAt: string | null;
+}
+
+export interface TodayPrnMedicationItem {
+  id: string;
+  name: string;
+  strength: string | null;
+  doseText: string;
+  instructions: string | null;
+  givenToday: TodayPrnGivenDose[];
+}
+
 export const todaySnapshotSchema = z
   .object({
     circle: circleSchema,
@@ -92,6 +109,7 @@ export interface TodayAgenda {
   timezone: string;
   memberRole: MemberRole;
   doseGroups: TodayDoseGroup[];
+  prnMedications?: TodayPrnMedicationItem[];
   nextAppointment: Appointment | null;
   tasksDueToday: Task[];
   isEmpty: boolean;
@@ -266,12 +284,31 @@ export function selectTodayAgenda(snapshot: TodaySnapshot, now: Date = new Date(
   );
 
   const todayDoseItems: TodayDoseItem[] = [];
+  const prnGivenByMedId = new Map<string, TodayPrnGivenDose[]>();
   for (const dose of snapshot.doseEvents) {
     if (formatLocalDateInZone(dose.dueAt, timezone) !== localDate) {
       continue;
     }
     const med = medById.get(dose.medicationId);
     if (med && !med.active) {
+      continue;
+    }
+    if (med?.schedule.kind === 'as_needed') {
+      if (dose.status === 'given') {
+        const entry: TodayPrnGivenDose = {
+          id: dose.id,
+          dueAt: dose.dueAt,
+          localTime: formatLocalTimeInZone(dose.dueAt, timezone),
+          actedBy: dose.actedBy,
+          actedAt: dose.actedAt,
+        };
+        const existing = prnGivenByMedId.get(med.id);
+        if (existing) {
+          existing.push(entry);
+        } else {
+          prnGivenByMedId.set(med.id, [entry]);
+        }
+      }
       continue;
     }
     todayDoseItems.push({
@@ -288,6 +325,23 @@ export function selectTodayAgenda(snapshot: TodaySnapshot, now: Date = new Date(
       actedAt: dose.actedAt,
     });
   }
+
+  const prnMedications: TodayPrnMedicationItem[] = snapshot.medications
+    .filter((med) => med.active && med.schedule.kind === 'as_needed')
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((med) => {
+      const givenToday = [...(prnGivenByMedId.get(med.id) ?? [])].sort(
+        (a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime(),
+      );
+      return {
+        id: med.id,
+        name: med.name,
+        strength: med.strength,
+        doseText: med.doseText,
+        instructions: med.instructions,
+        givenToday,
+      };
+    });
 
   todayDoseItems.sort((a, b) => {
     const timeCmp = a.localTime.localeCompare(b.localTime);
@@ -326,13 +380,18 @@ export function selectTodayAgenda(snapshot: TodaySnapshot, now: Date = new Date(
     )
     .sort((a, b) => new Date(a.dueAt!).getTime() - new Date(b.dueAt!).getTime());
 
-  const isEmpty = doseGroups.length === 0 && nextAppointment === null && tasksDueToday.length === 0;
+  const isEmpty =
+    doseGroups.length === 0 &&
+    prnMedications.length === 0 &&
+    nextAppointment === null &&
+    tasksDueToday.length === 0;
 
   return {
     localDate,
     timezone,
     memberRole: snapshot.memberRole,
     doseGroups,
+    prnMedications,
     nextAppointment,
     tasksDueToday,
     isEmpty,
@@ -1022,4 +1081,171 @@ export async function flushQueuedDoseCheckOffs(
   }
 
   return { ok: true, isOffline: false, flushedCount, remainingCount: 0, refusedCount };
+}
+
+export type LogPrnDoseErrorCode =
+  | 'FORBIDDEN_ROLE'
+  | 'VALIDATION_ERROR'
+  | 'OFFLINE'
+  | 'DUPLICATE_PRN_DOSE'
+  | 'NOT_AS_NEEDED'
+  | 'MEDICATION_INACTIVE'
+  | 'PRN_FAILED';
+
+export type LogPrnDoseResult =
+  | {
+      ok: true;
+      doseEvent: DoseEvent;
+    }
+  | {
+      ok: false;
+      errorCode: LogPrnDoseErrorCode;
+      isOffline: boolean;
+    };
+
+function createMockPrnDoseId(): string {
+  const g = globalThis as unknown as {
+    crypto?: { randomUUID?: () => string };
+    expo?: { uuidv4?: () => string };
+  };
+  const candidate = g.crypto?.randomUUID?.() ?? g.expo?.uuidv4?.();
+  if (typeof candidate === 'string' && candidate.length > 0) {
+    return candidate.toLowerCase();
+  }
+  return 'c2cd0099-0000-4000-8000-' + String(Date.now()).slice(-12).padStart(12, '0');
+}
+
+async function appendCachedDoseEvent(
+  doseEvent: DoseEvent,
+  storage: TodayStorageAdapter,
+  userId?: string | null,
+): Promise<void> {
+  const cached = await loadCachedTodaySnapshot(storage, userId);
+  if (!cached) return;
+  const exists = cached.doseEvents.some((d) => d.id === doseEvent.id);
+  const updated: TodaySnapshot = {
+    ...cached,
+    doseEvents: exists
+      ? cached.doseEvents.map((d) => (d.id === doseEvent.id ? doseEvent : d))
+      : [...cached.doseEvents, doseEvent],
+  };
+  await saveCachedTodaySnapshot(updated, storage);
+}
+
+/**
+ * Records an as-needed (`as_needed`) dose immediately on the server via `public.log_prn_dose`.
+ * Never queues offline taps because `log_prn_dose` stamps `due_at` and `acted_at` from the
+ * server's `now()`, and replaying later would record the wrong dose time.
+ */
+export async function logPrnDose(
+  input: {
+    medicationId: string;
+    memberRole?: MemberRole;
+  },
+  deps: TodayDeps = {},
+): Promise<LogPrnDoseResult> {
+  if (input.memberRole === 'viewer') {
+    return { ok: false, errorCode: 'FORBIDDEN_ROLE', isOffline: false };
+  }
+
+  const medicationId = input.medicationId.trim();
+  if (!medicationId) {
+    return { ok: false, errorCode: 'VALIDATION_ERROR', isOffline: false };
+  }
+
+  if (deps.isOffline) {
+    return { ok: false, errorCode: 'OFFLINE', isOffline: true };
+  }
+
+  const storage = deps.storage ?? defaultTodayStorage;
+  const trackDoseAction = deps.trackDoseAction ?? defaultTrackDoseAction;
+  const mocks = loadCareCircleMocks(deps.env);
+
+  if (mocks) {
+    const base = getOrInitMockTodaySnapshot(mocks);
+    const med = base.medications.find((m) => m.id === medicationId);
+    if (!med) {
+      return { ok: false, errorCode: 'PRN_FAILED', isOffline: false };
+    }
+    if (!med.active) {
+      return { ok: false, errorCode: 'MEDICATION_INACTIVE', isOffline: false };
+    }
+    if (med.schedule.kind !== 'as_needed') {
+      return { ok: false, errorCode: 'NOT_AS_NEEDED', isOffline: false };
+    }
+    const nowIso = (deps.now ?? (() => new Date()))().toISOString();
+    const created: DoseEvent = {
+      id: createMockPrnDoseId(),
+      medicationId,
+      circleId: base.circle.id,
+      dueAt: nowIso,
+      status: 'given',
+      actedBy: base.circle.createdBy,
+      actedAt: nowIso,
+    };
+    mockSnapshotState = {
+      ...base,
+      doseEvents: [...base.doseEvents, created],
+    };
+    await saveCachedTodaySnapshot(mockSnapshotState, storage);
+    try {
+      trackDoseAction('given');
+    } catch {
+      // Analytics errors must not fail user dose actions.
+    }
+    return { ok: true, doseEvent: created };
+  }
+
+  const userId = await resolveUserId(deps);
+  const getClient = deps.getClient ?? getSupabaseClient;
+
+  try {
+    const client = getClient();
+    const { data, error } = await client.rpc('log_prn_dose', { medicationId });
+
+    if (error) {
+      const msg = error.message ?? '';
+      const code = (error as { code?: string }).code;
+      if (isNetworkFailureMessage(msg, code)) {
+        return { ok: false, errorCode: 'OFFLINE', isOffline: true };
+      }
+      if (msg.includes('DUPLICATE_PRN_DOSE')) {
+        return { ok: false, errorCode: 'DUPLICATE_PRN_DOSE', isOffline: false };
+      }
+      if (msg.includes('NOT_AS_NEEDED')) {
+        return { ok: false, errorCode: 'NOT_AS_NEEDED', isOffline: false };
+      }
+      if (msg.includes('MEDICATION_INACTIVE')) {
+        return { ok: false, errorCode: 'MEDICATION_INACTIVE', isOffline: false };
+      }
+      return { ok: false, errorCode: 'PRN_FAILED', isOffline: false };
+    }
+
+    const rawCandidate = Array.isArray(data) ? data[0] : data;
+    if (!rawCandidate || typeof rawCandidate !== 'object') {
+      return { ok: false, errorCode: 'PRN_FAILED', isOffline: false };
+    }
+    const rawRow = { ...(rawCandidate as Record<string, unknown>) };
+    rawRow.due_at = normalizeIsoTimestamp(rawRow.due_at);
+    rawRow.acted_at = normalizeIsoTimestamp(rawRow.acted_at);
+    const parsed = doseEventRowSchema.safeParse(rawRow);
+    if (!parsed.success) {
+      return { ok: false, errorCode: 'PRN_FAILED', isOffline: false };
+    }
+
+    const doseEvent = doseEventFromRow(parsed.data);
+    await appendCachedDoseEvent(doseEvent, storage, userId);
+    try {
+      trackDoseAction('given');
+    } catch {
+      // Analytics errors must not fail user dose actions.
+    }
+    return { ok: true, doseEvent };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (isNetworkFailureMessage(message)) {
+      return { ok: false, errorCode: 'OFFLINE', isOffline: true };
+    }
+    return { ok: false, errorCode: 'PRN_FAILED', isOffline: false };
+  }
 }

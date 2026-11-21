@@ -33,6 +33,7 @@ export interface TodayScreenViewProps {
   notice?: TodayNotice | null;
   onRetry?: () => void;
   onCheckOffDose?: (doseEventId: string, status: TodayDoseStatusAction) => void;
+  onLogPrnDose?: (medicationId: string) => void;
   onOpenAppointment?: (appointmentId: string) => void;
   onOpenTask?: (taskId: string) => void;
   onNewVisitNote?: (appointmentId?: string) => void;
@@ -74,6 +75,7 @@ export function TodayScreenView({
   notice = null,
   onRetry,
   onCheckOffDose,
+  onLogPrnDose,
   onOpenAppointment,
   onOpenTask,
   onNewVisitNote,
@@ -280,6 +282,79 @@ export function TodayScreenView({
                     ))
                   )}
                 </View>
+
+                {(agenda.prnMedications?.length ?? 0) > 0 ? (
+                  <View testID="today-prn-section" style={{ gap: spacing.sm }}>
+                    <Text
+                      accessibilityRole="header"
+                      style={[typography.subtitle, { color: colors.textPrimary }]}
+                    >
+                      {en.today.prnHeading}
+                    </Text>
+
+                    {(agenda.prnMedications ?? []).map((med) => {
+                      const title = med.strength ? `${med.name} (${med.strength})` : med.name;
+                      const detailParts = [med.doseText, med.instructions].filter(
+                        (part): part is string => Boolean(part && part.trim().length > 0),
+                      );
+                      const subtitle = detailParts.join(' · ');
+
+                      return (
+                        <View key={med.id} testID={`today-prn-row-${med.id}`}>
+                          <Card accessibilityLabel={title}>
+                            <View style={{ gap: spacing.xs }}>
+                              <View>
+                                <Text style={[typography.body, { color: colors.textPrimary }]}>
+                                  {title}
+                                </Text>
+                                {subtitle ? (
+                                  <Text
+                                    style={[typography.caption, { color: colors.textSecondary }]}
+                                  >
+                                    {subtitle}
+                                  </Text>
+                                ) : null}
+                              </View>
+
+                              {med.givenToday.length > 0 ? (
+                                <View style={{ gap: spacing.xxs }}>
+                                  {med.givenToday.map((dose) => (
+                                    <View
+                                      key={dose.id}
+                                      testID={`today-prn-dose-${dose.id}`}
+                                      style={styles.rowBetween}
+                                    >
+                                      <Text
+                                        style={[typography.label, { color: colors.textSecondary }]}
+                                      >
+                                        {dose.localTime}
+                                      </Text>
+                                      <Chip label={en.today.statusGiven} tone="primary" />
+                                    </View>
+                                  ))}
+                                </View>
+                              ) : null}
+
+                              {canEditDoses ? (
+                                <View
+                                  testID={`today-prn-give-${med.id}`}
+                                  style={{ marginTop: spacing.xxs }}
+                                >
+                                  <Button
+                                    label={en.today.givePrnDoseCta}
+                                    accessibilityLabel={`${en.today.givePrnDoseCta}: ${med.name}`}
+                                    variant="secondary"
+                                    onPress={() => onLogPrnDose?.(med.id)}
+                                  />
+                                </View>
+                              ) : null}
+                            </View>
+                          </Card>
+                        </View>
+                      );
+                    })}
+                  </View>
+                ) : null}
 
                 <View testID="today-appointment-section" style={{ gap: spacing.xs }}>
                   <Text
