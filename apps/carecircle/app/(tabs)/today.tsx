@@ -8,6 +8,7 @@ import {
   flushQueuedDoseCheckOffs,
   getOrInitMockTodaySnapshot,
   loadTodaySnapshot,
+  logPrnDose,
   msUntilNextMidnightInZone,
   selectTodayAgenda,
   type TodayDeps,
@@ -227,6 +228,53 @@ export default function TodayScreen({ deps, referenceNow, onNewVisitNote }: Toda
     [deps, effectiveNow, handleRetry, mocks],
   );
 
+  const inFlightPrnMedsRef = useRef<Set<string>>(new Set());
+
+  const handleLogPrnDose = useCallback(
+    (medicationId: string) => {
+      if (inFlightPrnMedsRef.current.has(medicationId)) {
+        return;
+      }
+      inFlightPrnMedsRef.current.add(medicationId);
+      setNotice(null);
+
+      void (async () => {
+        try {
+          const res = await logPrnDose(
+            {
+              medicationId,
+              memberRole: snapshotRef.current?.memberRole,
+            },
+            deps,
+          );
+          if (res.ok) {
+            setSnapshot((prev) => {
+              if (!prev) return prev;
+              const exists = prev.doseEvents.some((d) => d.id === res.doseEvent.id);
+              return {
+                ...prev,
+                doseEvents: exists
+                  ? prev.doseEvents.map((d) => (d.id === res.doseEvent.id ? res.doseEvent : d))
+                  : [...prev.doseEvents, res.doseEvent],
+              };
+            });
+            return;
+          }
+          if (res.isOffline) {
+            setIsOffline(true);
+          }
+          setNotice('checkOffFailed');
+          if (res.errorCode === 'DUPLICATE_PRN_DOSE') {
+            handleRetry();
+          }
+        } finally {
+          inFlightPrnMedsRef.current.delete(medicationId);
+        }
+      })();
+    },
+    [deps, handleRetry],
+  );
+
   const agenda = useMemo(
     () => (snapshot ? selectTodayAgenda(snapshot, effectiveNow) : null),
     [effectiveNow, snapshot],
@@ -250,6 +298,7 @@ export default function TodayScreen({ deps, referenceNow, onNewVisitNote }: Toda
       notice={notice}
       onRetry={handleRetry}
       onCheckOffDose={handleCheckOffDose}
+      onLogPrnDose={handleLogPrnDose}
       onNewVisitNote={onNewVisitNote ?? defaultOpenNewVisitNote}
     />
   );

@@ -291,7 +291,9 @@
     "refusedTitle": "Some check-offs were not saved",
     "refusedMessage": "A check-off made offline could not be saved, for example because someone else recorded the dose first. Today now shows what was saved.",
     "newVisitNoteCta": "New visit note",
-    "newVisitNoteA11y": "Create a new visit note"
+    "newVisitNoteA11y": "Create a new visit note",
+    "prnHeading": "As-needed medications",
+    "givePrnDoseCta": "Gave a dose now"
   },
   "visit": {
     "title": "New Visit Note",
