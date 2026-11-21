@@ -24,7 +24,7 @@ select has_table('public', 'users_profile', 'public.users_profile table exists')
 select columns_are(
   'public',
   'users_profile',
-  array['user_id', 'display_name', 'locale', 'timezone', 'created_at'],
+  array['user_id', 'display_name', 'locale', 'timezone', 'created_at', 'health_consent_at'],
   'users_profile columns match spec character for character'
 );
 

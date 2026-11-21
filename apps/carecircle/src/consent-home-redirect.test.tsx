@@ -6,6 +6,7 @@ import SignInRoute from '../app/(auth)/sign-in';
 import OnboardingStartRoute from '../app/(onboarding)/start';
 import HomeScreen from '../app/index';
 import InviteTokenRoute from '../app/invite/[token]';
+import { fetchHealthConsentStatus } from './features/consent';
 
 const USER_ID = 'cc110099-0000-4000-8000-000000000099';
 const CONSENT_ISO = '2026-11-21T10:00:00.000Z';
@@ -123,5 +124,24 @@ describe('RootLayout consent gate when HomeScreen redirects / -> /(onboarding)/s
     await act(async () => {
       view.unmount();
     });
+  });
+
+  it('fetchHealthConsentStatus returns { ok: true, healthConsentAt: null } without querying when userId is missing or __authenticated__', async () => {
+    mockFrom.mockClear();
+
+    await expect(fetchHealthConsentStatus('__authenticated__')).resolves.toEqual({
+      ok: true,
+      healthConsentAt: null,
+    });
+    await expect(fetchHealthConsentStatus(null)).resolves.toEqual({
+      ok: true,
+      healthConsentAt: null,
+    });
+    await expect(fetchHealthConsentStatus('   ')).resolves.toEqual({
+      ok: true,
+      healthConsentAt: null,
+    });
+
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 });

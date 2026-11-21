@@ -14,12 +14,21 @@ export type GiveHealthConsentResult =
 export async function fetchHealthConsentStatus(
   userId?: string | null,
 ): Promise<HealthConsentLookupResult> {
+  const trimmedUserId = userId?.trim() ?? '';
+  if (!trimmedUserId || trimmedUserId === '__authenticated__') {
+    return {
+      ok: true,
+      healthConsentAt: null,
+    };
+  }
+
   try {
     const supabase = getSupabaseClient();
-    const baseQuery = supabase.from('users_profile').select('health_consent_at');
-    const filteredQuery =
-      userId && userId !== '__authenticated__' ? baseQuery.eq('user_id', userId) : baseQuery;
-    const { data, error } = await filteredQuery.maybeSingle();
+    const { data, error } = await supabase
+      .from('users_profile')
+      .select('health_consent_at')
+      .eq('user_id', trimmedUserId)
+      .maybeSingle();
 
     if (error) {
       return {
