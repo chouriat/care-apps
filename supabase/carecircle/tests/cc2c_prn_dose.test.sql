@@ -415,8 +415,10 @@ values (
 );
 
 select pg_temp.as_user('c2c00001-0000-4000-8000-000000000001'::uuid);
+-- The call runs in its own statement: a count in the same statement as the call uses that statement's snapshot and can never see the row the call inserts.
+select set_config('cc2c.r25', pg_temp.call_log_prn('c2c20003-0000-4000-8000-000000000003'::uuid), true);
 select is(
-  pg_temp.call_log_prn('c2c20003-0000-4000-8000-000000000003'::uuid)
+  current_setting('cc2c.r25')
     || '/count=' ||
   (select count(*)::int from public.dose_events where medication_id = 'c2c20003-0000-4000-8000-000000000003'::uuid)::text,
   'given/c2c20003-0000-4000-8000-000000000003/c2cc0001-0000-4000-8000-000000000001/c2c00001-0000-4000-8000-000000000001/true/true/count=2',
@@ -512,8 +514,10 @@ select is(
 );
 
 select pg_temp.as_user('c2c00002-0000-4000-8000-000000000002'::uuid);
+-- The call runs in its own statement: a count in the same statement as the call uses that statement's snapshot and can never see the row the call inserts.
+select set_config('cc2c.r29', pg_temp.call_log_prn('c2c20008-0000-4000-8000-000000000008'::uuid), true);
 select is(
-  pg_temp.call_log_prn('c2c20008-0000-4000-8000-000000000008'::uuid)
+  current_setting('cc2c.r29')
     || '/count=' ||
   (select count(*)::int from public.dose_events where medication_id = 'c2c20008-0000-4000-8000-000000000008'::uuid)::text,
   'given/c2c20008-0000-4000-8000-000000000008/c2cc0001-0000-4000-8000-000000000001/c2c00002-0000-4000-8000-000000000002/true/true/count=2',
